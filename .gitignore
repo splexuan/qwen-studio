@@ -44,3 +44,9 @@ desktop.ini
 # vendor/faster-qwen3-tts-main/  加速推理内核的源码（MIT），app/core.py 会 import 它，
 #   缺了这份代码 clone 出来跑不起来，所以要跟着提交；上面排除的 vendor/bin/ 才是二进制。
 # *.bat                          两个启动器。改动很少但很关键，别丢。
+# 根目录下的临时/测试目录（自测打包、验证更新流程时建的）
+# 单数 _xxx.bin 之类也顺手挡掉，免得哪次测试的产物混进提交
+/_updtest*/
+/_packtest*/
+/_selftest*/
+/_*.bin
