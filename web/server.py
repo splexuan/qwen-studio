@@ -52,6 +52,7 @@ sys.path.insert(0, str(ROOT / "app"))
 
 import api_docs as api_docs_mod  # noqa: E402  —— 接口文档的唯一来源
 import asr as asr_mod  # noqa: E402
+import buildinfo as buildinfo_mod  # noqa: E402  —— 代码版本标记（打包/覆盖更新后靠它认版本）
 import config as cfg  # noqa: E402
 import core  # noqa: E402  —— 生成核心（import 不会加载模型）
 import fetch as fetch_mod  # noqa: E402  —— 从链接拉参考音频
@@ -106,6 +107,10 @@ def api_bootstrap():
     asr_ok, asr_why = asr_mod.available()
     return {
         "ok": True,
+        # 对方是拿 GitHub 的 zip 手动覆盖更新的，这一行是他们唯一能看出
+        # 「覆盖成功了没、是不是最新版」的地方，所以放在首屏数据里。
+        "version": buildinfo_mod.CODE_VERSION,
+        "pack_stamp": buildinfo_mod.PACK_STAMP,
         "hardware": {
             "short": p.short(),
             "rows": [{"k": k, "v": v} for k, v in p.rows()],

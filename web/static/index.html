@@ -1166,6 +1166,7 @@ a.btn{text-decoration:none}
     <div class="notes mt" id="env-models" style="padding:0"></div>
     <p class="hint mt">排错顺序：先看「计算后端 / 显存 / 精度」，再看这里给出的提示。
       缺权重会在上方直接列出来。</p>
+    <p class="hint mt">代码版本：<b id="env-version">—</b></p>
   </div>
 </aside>
 
@@ -4019,6 +4020,10 @@ function renderEnv() {
 async function boot() {
   try {
     BOOT = await api("/api/bootstrap");
+    // 版本号放在「运行环境」抽屉最下面：对方是从 GitHub 下 zip 手动覆盖更新的，
+    // 覆盖完想确认「生效了没」，就看这一行。
+    $("#env-version").textContent = BOOT.version || "未标记";
+    if (BOOT.pack_stamp) $("#env-version").textContent += ` ｜ 打包于 ${BOOT.pack_stamp}`;
   } catch (e) {
     $("#boot").innerHTML = `<b>启动失败</b><br>${esc(e.message)}<br>
       <span style="font-size:12px">请确认后端已启动（run_web.bat），再刷新本页。</span>`;
