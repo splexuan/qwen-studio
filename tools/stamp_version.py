@@ -45,7 +45,10 @@ def current() -> str:
         except OSError:
             return FALLBACK
     when = git("log", "-1", "--format=%cd", "--date=format:%Y-%m-%d %H:%M")
-    dirty = git("status", "--porcelain")
+    # 「有未提交改动」只看**别的**文件：标记文件此刻必然是改状态（不然没必要来标记），
+    # 把它算进去的话，按「提交 → 打标记」的惯例跑出来的标记永远带着这四个字。
+    dirty = [ln for ln in git("status", "--porcelain").splitlines()
+             if ln and not ln.endswith("app/buildinfo.py")]
     return f"{sha} · {when}" + ("（有未提交改动）" if dirty else "")
 
 
