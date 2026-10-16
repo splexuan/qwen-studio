@@ -45,7 +45,8 @@ ROOT = Path(__file__).resolve().parent.parent
 TOP_DIRS = ["app", "web", "vendor", "runtime", "models", "tools"]
 
 # 顶层单个文件，缺了也能跑，但没有说明文档对方会一脸茫然
-TOP_FILES = ["run_web.bat", "自检.bat", "README.md", "操作教程.md"]
+TOP_FILES = ["run_web.bat", "自检.bat", "打包整合包.bat", "更新代码.bat",
+             "README.md", "操作教程.md"]
 
 # 内容一律不带、但**目录要建出来**的：第一次启动时程序自己也会建，
 # 建出来是为了让对方解压后一眼看到「音色放这儿、结果出这儿」。
@@ -169,6 +170,16 @@ def write_notes(dest: Path, include_models: bool, items: list[tuple[Path, Path]]
 * 有 NVIDIA 显卡 → 自动走 GPU；显存 6 G 以上体验最好。
 * 没有独显 / 显存不够 → 自动降级到 CPU，**能跑，但慢**（这是设计好的降级，不是报错）。
 * 软件完全离线：权重和推理内核都随包带着，不联网、不下载。
+
+怎么更新
+--------
+整合包里的**代码**会跟着版本走，权重和运行时一辈子不变，所以更新很轻：
+
+1. 关掉 run_web.bat
+2. 从项目主页下载最新的代码 zip（就是仓库页的 Download ZIP，几百 KB）
+3. 双击  更新代码.bat  —— 它把代码盖到安装目录上，并清掉新版本里已经不存在的旧文件。
+   你的音色库（voices）、生成记录（outputs）、权重、运行时都不动。
+4. 重新双击 run_web.bat。点左下角那枚「运行环境」芯片，最下面一行就是新的代码版本号。
 
 第一次用建议看  操作教程.md
 --------------------------

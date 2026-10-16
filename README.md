@@ -385,6 +385,32 @@ runtime\python\python.exe tools\bench.py 御姐   # 冷热路径与 RTF 基准
 
 ---
 
+## 更新
+
+代码在版本库里，**只有代码**（仓库 zip 约 500 KB）；`models/` `runtime/` `vendor/bin/`
+在整合包里，一辈子不变。所以更新 = 换掉代码那几百 KB：
+
+```bat
+更新代码.bat
+```
+
+它把代码 zip 盖到安装目录上，并清掉「新版本里已经不存在的旧文件」；
+`voices/` `outputs/` `web/_uploads/` `models/` `runtime/` `vendor/` 一律不碰。
+zip 会自动在同目录 / 下载 / 桌面里找最新的那个，也可以 `--zip` 指定。
+
+启动后点左下角「运行环境」抽屉最下面一行，就是当前的代码版本号 ——
+覆盖完看它，就知道生效了没。
+
+版本号由 `tools\stamp_version.py` 按 git 写入 `app/buildinfo.py`。约定：
+
+```
+提交代码 → stamp_version.py --write → 把标记单独提交一次（**不要 amend**）
+```
+
+amend 会把上一次提交的哈希改掉，标记里那个哈希当场失效。
+
+---
+
 ## 打包分发给别人
 
 整个工作台自带运行时和权重，**解压到任何路径双击 `run_web.bat` 就能跑** ——
