@@ -1,0 +1,46 @@
+# 只把**代码**放进版本库。
+#
+# 这个项目 26 G 里，真正会改的代码只有 1.2 M（app + web + tools + 文档 + 两个 .bat）；
+# 其余是打包时定死的运行时和权重，交给整合包，不进 git。
+# 这么分之后，「更新」就只剩一件事：git pull + 重启。
+#
+# ⚠ 写这个文件时注意：git **只认整行开头的 #**。
+# 行尾写注释会被当成模式的一部分（`runtime/  # 便携 Python` 匹配不到任何东西），
+# 结果就是 26 G 全被 git 扫一遍、add 直接卡死。要注释就另起一行。
+
+# ---- 打包时定死的东西：26 G，一行都别进版本库 ----
+# 便携 Python + torch（7.8 G）
+runtime/
+# 5 套权重（17.5 G）
+models/
+# ffmpeg / sox（663 M）
+vendor/bin/
+
+# ---- 个人数据：不是软件本体，而且是**最不能丢**的东西 ----
+# （音色库是你的参考音频和音色基因，git 不负责备份它 —— 见「音色备份」一节）
+voices/
+outputs/
+web/_uploads/
+web/_preview/
+
+# ---- 打包产物 ----
+dist/
+
+# ---- 开发过程产物 ----
+# 项目笔记，含个人工作记录
+.workbuddy/
+__pycache__/
+*.pyc
+# 验证脚本的截图
+tools/_*.png
+tools/_tmp*
+tools/_ab/
+*.log
+nohup.out
+.DS_Store
+desktop.ini
+
+# ---- 刻意保留在版本库里的 ----
+# vendor/faster-qwen3-tts-main/  加速推理内核的源码（MIT），app/core.py 会 import 它，
+#   缺了这份代码 clone 出来跑不起来，所以要跟着提交；上面排除的 vendor/bin/ 才是二进制。
+# *.bat                          两个启动器。改动很少但很关键，别丢。

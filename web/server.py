@@ -1,0 +1,620 @@
+"""Qwen3-TTS Studio — WebUI 后端（FastAPI）。
+
+本文件是**唯一的界面实现**。刻意没有沿用原整合包的 Gradio：
+参考项目（omnivoice-studio）已经踩过这个坑 —— Gradio 会在组件标签、主题变量、
+DOM 结构上反复与你抢控制权（哈希类名随版本变、注入的 CSS 选择器被重写），
+想把每个细节做到位，成本比自己写前端更高。
+
+分工：
+  · 模型调用与音色库读写 —— 直接复用 app/ 下的**模块级函数**，不重复实现
+    （core.synthesize / voices.rows / script.preview …）
+  · 界面与交互 —— 全部由 web/static/index.html 自持
+  · 接口文档 —— 内容在 web/api_docs.py，本文件只把它挂成 GET /api/docs
+
+接口：
+    GET  /api/bootstrap                    硬件档位 + 音色列表 + 说话人 + 语种 + 模型状态
+    GET  /api/hardware                     硬件详情（排障用）
+    POST /api/upload                       上传参考音频到临时目录
+    POST /api/upload/url                   从链接拉取参考音频（同样落临时目录）
+    POST /api/transcribe                   试转写（可选能力，默认不可用）
+    GET  /api/voices                       音色列表（含时长/长度提示/基因状态）
+    POST /api/voices                       保存音色（可带裁剪区间，并自动排队抽取音色基因）
+    POST /api/voices/{name}/trim           就地裁剪参考音频
+    POST /api/voices/{name}/rename         重命名
+    POST /api/voices/{name}/text           更新参考文本
+    POST /api/voices/{name}/prompt         生成音色基因（.pt）
+    POST /api/voices/delete                批量删除
+    POST /api/script/preview               剧本实时预览（纯解析，不加载模型）
+    POST /api/jobs       GET /api/jobs/{id}  提交合成任务 / 轮询进度
+    POST /api/speakers/{name}/preview      官方说话人试听（缓存命中直接给 URL，否则排队生成）
+    GET  /api/history                      合成记录
+    POST /api/history/delete  /clear       删除 / 清空记录
+    GET  /media/{out|upload|voice|preview}/{name}  音频回放
+    GET  /api/docs                         接口清单
+    GET  /openapi.json                     FastAPI 自动生成的机器可读规格
+
+启动：
+    runtime\\python.exe web\\server.py
+    或  run_web.bat
+"""
+
+from __future__ import annotations
+
+import shutil
+import sys
+import threading
+import time
+import uuid
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "app"))
+
+import api_docs as api_docs_mod  # noqa: E402  —— 接口文档的唯一来源
+import asr as asr_mod  # noqa: E402
+import config as cfg  # noqa: E402
+import core  # noqa: E402  —— 生成核心（import 不会加载模型）
+import fetch as fetch_mod  # noqa: E402  —— 从链接拉参考音频
+import history as history_mod  # noqa: E402
+import script as script_mod  # noqa: E402
+import voices as voices_mod  # noqa: E402
+
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile  # noqa: E402
+from fastapi.responses import FileResponse, JSONResponse, Response  # noqa: E402
+
+app = FastAPI(title="Qwen3-TTS Studio", docs_url=None, redoc_url=None)
+
+_STATIC = ROOT / "web" / "static"
+_INDEX = _STATIC / "index.html"
+
+
+# ---------------------------------------------------------------------------
+# 工具
+# ---------------------------------------------------------------------------
+def _safe(name: str) -> str:
+    """只取文件名部分，挡住 ../ 之类的目录穿越。"""
+    return Path(name or "").name
+
+
+def _ok(**kw):
+    return JSONResponse({"ok": True, **kw})
+
+
+def _err(msg: str, code: int = 400):
+    return JSONResponse({"ok": False, "error": msg}, status_code=code)
+
+
+# ---------------------------------------------------------------------------
+# 首屏
+# ---------------------------------------------------------------------------
+@app.get("/api/hardware")
+def api_hardware():
+    p = cfg.profile()
+    return {
+        "ok": True,
+        "profile": p.to_dict(),
+        "rows": [{"k": k, "v": v} for k, v in p.rows()],
+        "notes": p.notes,
+        "short": p.short(),
+    }
+
+
+@app.get("/api/bootstrap")
+def api_bootstrap():
+    p = cfg.profile()
+    missing = cfg.missing_models()
+    asr_ok, asr_why = asr_mod.available()
+    return {
+        "ok": True,
+        "hardware": {
+            "short": p.short(),
+            "rows": [{"k": k, "v": v} for k, v in p.rows()],
+            "notes": p.notes,
+            "device": p.device,
+            "dtype": p.dtype,
+            "vram_gib": p.vram_gib,
+            "default_size": p.default_size,
+            "is_gpu": p.is_gpu,
+        },
+        "languages": cfg.LANGUAGES,
+        "sizes": list(cfg.SIZES),
+        "speakers": [{"key": k, "label": v} for k, v in cfg.OFFICIAL_SPEAKERS],
+        "voices": voices_mod.rows(),
+        "models": {
+            "missing": missing,
+            "ready": not missing,
+            "map": {f"{k}|{s}": cfg.MODEL_DIRS[(k, s)]
+                    for k in cfg.KINDS for s in cfg.SIZES if (k, s) in cfg.MODEL_DIRS},
+        },
+        "asr": {"available": asr_ok, "reason": asr_why},
+        "limits": {
+            "max_text_chars": cfg.MAX_TEXT_CHARS,
+            "ref_min_secs": voices_mod.REF_MIN_SECS,
+            "ref_good_max_secs": voices_mod.REF_GOOD_MAX_SECS,
+            "url_max_mb": cfg.URL_IMPORT_MAX_MB,
+        },
+        "defaults": {
+            "xvec_only": cfg.CLONE_XVEC_ONLY,
+            "gap_secs": cfg.SCRIPT_GAP_SECS,
+        },
+        "model_status": core.model_status(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# 上传与转写
+# ---------------------------------------------------------------------------
+@app.post("/api/upload")
+async def api_upload(file: UploadFile = File(...)):
+    raw = _safe(file.filename or "ref.wav")
+    ext = Path(raw).suffix.lower()
+    if ext not in (".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aac", ".wma"):
+        return _err(f"不支持的音频格式：{ext or '未知'}")
+    dst = cfg.UPLOAD_DIR / f"{uuid.uuid4().hex[:12]}{ext}"
+    try:
+        with dst.open("wb") as f:
+            shutil.copyfileobj(file.file, f)
+    except Exception as e:  # noqa: BLE001
+        return _err(f"保存上传文件失败：{e}")
+    # libsndfile 认不了 m4a / aac / wma 这些容器，而上传框里一直写着支持 ——
+    # 所以这里补一道 ffmpeg 转码，让「界面说支持的格式」和「真能用的格式」对齐。
+    try:
+        dst = voices_mod.ensure_decodable(dst)
+    except Exception as e:  # noqa: BLE001
+        dst.unlink(missing_ok=True)
+        return _err(str(e))
+    dur = voices_mod.duration_of_file(dst)
+    if dur <= 0:
+        dst.unlink(missing_ok=True)
+        return _err("这个文件读不出音频，可能不是有效的音频文件。")
+    return _ok(name=dst.name, original=raw, duration=dur, url=f"/media/upload/{dst.name}")
+
+
+@app.post("/api/upload/url")
+def api_upload_url(payload: dict):
+    """从链接拉取参考音频（界面上「新增音色 → 粘贴音频直链」）。
+
+    落盘位置与返回字段都跟 ``/api/upload`` 一致，所以前端拿到之后走的是
+    **同一条**下游：波形裁剪 → 转写 → 保存音色。
+
+    刻意写成同步函数而非 ``async def``：下载是阻塞的，FastAPI 会把它丢进
+    线程池，事件循环照常转（还能同时回放音频、看进度）；写成 async 才真会卡住服务。
+    """
+    try:
+        return _ok(**fetch_mod.fetch_reference(payload.get("url") or ""))
+    except Exception as e:  # noqa: BLE001
+        return _err(str(e))
+
+
+@app.post("/api/transcribe")
+async def api_transcribe(payload: dict):
+    ok, why = asr_mod.available()
+    if not ok:
+        return _err(why)
+    src = payload.get("upload") or payload.get("voice") or ""
+    if payload.get("upload"):
+        path = cfg.UPLOAD_DIR / _safe(src)
+    else:
+        path = voices_mod.path_of(_safe(src), voices_mod.WAV_EXT)
+    if not path.exists():
+        return _err("找不到要转写的音频。")
+    try:
+        arr, sr = voices_mod.read_audio(path)
+        if payload.get("start") is not None and payload.get("end") is not None:
+            arr = voices_mod.trim(arr, sr, float(payload["start"]), float(payload["end"]))
+        text = asr_mod.transcribe(arr, sr)
+    except Exception as e:  # noqa: BLE001
+        return _err(f"转写失败：{e}")
+    return _ok(text=text)
+
+
+# ---------------------------------------------------------------------------
+# 音色库
+# ---------------------------------------------------------------------------
+@app.get("/api/voices")
+def api_voices():
+    return {"ok": True, "voices": voices_mod.rows()}
+
+
+@app.post("/api/voices")
+async def api_voice_create(payload: dict):
+    """保存音色。音频来源三选一：
+
+    * ``upload`` —— 刚上传的文件名（``web/_uploads/``）
+    * ``voice``  —— 已有音色名（「另存为」）
+    * ``out``    —— ``outputs/`` 里的生成结果文件名（声音设计的「存进音色库」走这条：
+      生成出来的那把嗓子复现不了，得直接拿产物当参考音频，不必先复制一份到别处）
+
+    保存成功后默认**顺手排一个后台任务**生成音色基因，返回的 ``job`` 即任务号；
+    传 ``prompt=false`` 可关掉（批量导入只想要音频时用）。
+    """
+    name = (payload.get("name") or "").strip()
+    if not name:
+        return _err("请填写音色名。")
+    try:
+        source = "upload"
+        if payload.get("upload"):
+            src = cfg.UPLOAD_DIR / _safe(payload["upload"])
+            if not src.exists():
+                return _err("上传的音频已失效，请重新上传。")
+            arr, sr = voices_mod.read_audio(src)
+            if payload.get("start") is not None and payload.get("end") is not None:
+                arr = voices_mod.trim(arr, sr, float(payload["start"]), float(payload["end"]))
+            audio = (arr, sr)
+        elif payload.get("voice"):
+            v = voices_mod.load_voice(_safe(payload["voice"]))
+            if v is None:
+                return _err(f"音色 [{payload['voice']}] 不存在。")
+            audio = v["audio_path"]
+            source = f"copy:{payload['voice']}"
+        elif payload.get("out"):
+            out = _safe(payload["out"])
+            src = cfg.OUTPUT_DIR / out
+            if not src.exists():
+                return _err("这条生成结果的音频已经不在 outputs/ 里了，没法再拿它存音色。")
+            audio = src
+            source = f"out:{out}"
+        else:
+            return _err("请先上传参考音频、选择一个已有音色，或指定一条生成结果。")
+
+        info = voices_mod.save_voice(
+            name,
+            audio,
+            ref_text=(payload.get("ref_text") or ""),
+            xvec_only=payload.get("xvec_only"),
+            overwrite=bool(payload.get("overwrite")),
+            source=source,
+        )
+
+        # 顺手把音色基因排进后台队列 —— 刚存的音色必然还没有 .pt
+        # （save_voice 会把覆盖时的旧 .pt 删掉），而它只在「保存」这个
+        # 时刻最容易被忘掉。做成后台任务而不是同步等待：
+        # 抽基因要加载模型，十几秒起步，卡在「保存」上体验很差。
+        # 传 prompt=false 可以只要音色、不要基因（脚本批量导入时用）。
+        job = None
+        if payload.get("prompt", True):
+            job = _new_job("prompt", {"name": info["name"], "size": payload.get("size")})
+
+        return _ok(name=info["name"], replaced=info["replaced"],
+                   voices=voices_mod.rows(), job=job)
+    except voices_mod.VoiceExistsError as e:
+        # 单独带一个 code：界面据此把「已存在」升级成「要不要覆盖」的二次确认，
+        # 而不是只能看到一句红字、还得自己回音色库去删。音色名唯一这条规则
+        # 由**这里**保证（而不是前端拦一下），前端那层确认只是顺手。
+        return JSONResponse(
+            {"ok": False, "error": str(e), "code": "name_exists",
+             "name": voices_mod.sanitize_name(name)},
+            status_code=409,
+        )
+    except Exception as e:  # noqa: BLE001
+        return _err(str(e))
+
+
+@app.post("/api/voices/{name}/trim")
+async def api_voice_trim(name: str, payload: dict):
+    try:
+        r = voices_mod.trim_voice(_safe(name), float(payload.get("start", 0)),
+                                  float(payload.get("end", 0)))
+        return _ok(**r, voices=voices_mod.rows())
+    except Exception as e:  # noqa: BLE001
+        return _err(str(e))
+
+
+@app.post("/api/voices/{name}/rename")
+async def api_voice_rename(name: str, payload: dict):
+    try:
+        new = voices_mod.rename_voice(_safe(name), payload.get("new_name") or "")
+        return _ok(name=new, voices=voices_mod.rows())
+    except Exception as e:  # noqa: BLE001
+        return _err(str(e))
+
+
+@app.post("/api/voices/{name}/text")
+async def api_voice_text(name: str, payload: dict):
+    try:
+        voices_mod.update_ref_text(_safe(name), payload.get("ref_text") or "")
+        return _ok(voices=voices_mod.rows())
+    except Exception as e:  # noqa: BLE001
+        return _err(str(e))
+
+
+@app.post("/api/voices/{name}/prompt")
+async def api_voice_prompt(name: str, payload: dict | None = None):
+    """生成音色基因（.pt）。需要加载模型，耗时较长，因此走后台线程 + 轮询。"""
+    n = _safe(name)
+    if voices_mod.load_voice(n) is None:
+        return _err(f"音色 [{n}] 不存在。")
+    jid = _new_job("prompt", {"name": n, "size": (payload or {}).get("size")})
+    return _ok(job=jid)
+
+
+@app.post("/api/voices/delete")
+async def api_voice_delete(payload: dict):
+    done = voices_mod.delete_voices(payload.get("names") or [])
+    return _ok(deleted=done, voices=voices_mod.rows())
+
+
+# ---------------------------------------------------------------------------
+# 模型管理（界面「高级 → 模型管理」用）
+# ---------------------------------------------------------------------------
+@app.post("/api/model/load")
+async def api_model_load(payload: dict):
+    """主动加载一套权重。用来把「首次生成的那十几秒」提前到用户可等待的时机。"""
+    kind = (payload.get("kind") or "").lower()
+    size = (payload.get("size") or "").strip()
+    if kind not in cfg.KINDS:
+        return _err(f"未知的功能：{kind}")
+    if size in ("", "auto"):
+        size = cfg.profile().default_size
+    if size not in cfg.SIZES:
+        return _err(f"未知的规格：{size}")
+    try:
+        core.load_model(kind, size)
+    except Exception as e:  # noqa: BLE001
+        return _err(f"加载失败：{e}")
+    return _ok(status=core.model_status())
+
+
+@app.post("/api/model/unload")
+async def api_model_unload():
+    core.unload_model()
+    return _ok(status=core.model_status())
+
+
+# ---------------------------------------------------------------------------
+# 剧本预览（不加载模型）
+# ---------------------------------------------------------------------------
+@app.post("/api/script/preview")
+async def api_script_preview(payload: dict):
+    text = payload.get("text") or ""
+    mode = (payload.get("mode") or "script").lower()
+    known = voices_mod.list_voices() if mode == "script" else cfg.SPEAKER_NAMES
+    try:
+        return _ok(**script_mod.preview(text, known),
+                   roles=script_mod.all_roles(script_mod.parse(text)))
+    except Exception as e:  # noqa: BLE001
+        return _err(str(e))
+
+
+# ---------------------------------------------------------------------------
+# 合成任务
+# ---------------------------------------------------------------------------
+_JOBS: dict[str, dict] = {}
+_JOBS_LOCK = threading.Lock()
+
+
+def _job_set(jid: str, **kw) -> None:
+    with _JOBS_LOCK:
+        _JOBS.setdefault(jid, {}).update(kw)
+
+
+def _new_job(kind: str, params: dict) -> str:
+    jid = uuid.uuid4().hex[:12]
+    with _JOBS_LOCK:
+        _JOBS[jid] = {
+            "id": jid, "kind": kind, "state": "queued",
+            "message": "排队中…", "progress": 0.0, "result": None,
+            "created": time.time(),
+        }
+        # 只保留最近 100 个任务，避免长跑后内存无限增长
+        if len(_JOBS) > 100:
+            for k in sorted(_JOBS, key=lambda x: _JOBS[x]["created"])[:-100]:
+                _JOBS.pop(k, None)
+    threading.Thread(target=_run_job, args=(jid, kind, params), daemon=True).start()
+    return jid
+
+
+def _run_job(jid: str, kind: str, p: dict) -> None:
+    try:
+        if kind == "prompt":
+            _job_set(jid, state="running", message="正在加载模型并抽取音色基因…", progress=0.15)
+            name = voices_mod.build_prompt(p["name"], p.get("size"))
+            _job_set(jid, state="done", progress=1.0, message=f"音色基因已生成：{name}.pt",
+                     result={"name": name, "voices": voices_mod.rows()})
+            return
+
+        if kind == "preview":
+            _job_set(jid, state="running", progress=0.15,
+                     message="正在准备模型 —— 首次试听要加载权重，通常十几到几十秒。")
+            path = core.build_speaker_preview(p["speaker"], p["size"])
+            _job_set(jid, state="done", progress=1.0, message="试听已就绪",
+                     result={"speaker": p["speaker"], "url": f"/media/preview/{path.name}"})
+            return
+
+        # kind == "synth"
+        _job_set(jid, state="running", progress=0.1,
+                 message="正在准备模型 —— 首次使用该规格要加载权重并预热 CUDA graph，"
+                         "通常十几到几十秒。")
+        wav, sr, status, level = core.synthesize(p)
+        if level == "error":
+            _job_set(jid, state="error", message=status, progress=1.0)
+            history_mod.add({**p, "status": "error", "file": "", "duration": 0})
+            return
+
+        _job_set(jid, message="正在写入音频…", progress=0.92)
+        tag = {"clone": "clone", "design": "design", "official": "official",
+               "script": "script"}.get(p.get("mode", "clone"), "audio")
+        fname = core.save_wav(wav, sr, tag)
+        dur = round(len(wav) / sr, 2) if sr else 0.0
+        head = status.splitlines()[0] if status else ""
+        history_mod.add({**p, "status": level, "file": fname, "duration": dur})
+
+        _job_set(
+            jid, state="done", progress=1.0,
+            message=status,
+            result={
+                "file": fname, "url": f"/media/out/{fname}",
+                "duration": dur, "level": level,
+                "headline": head,
+            },
+        )
+    except Exception as e:  # noqa: BLE001
+        _job_set(jid, state="error", message=f"{type(e).__name__}: {e}", progress=1.0)
+
+
+@app.post("/api/jobs")
+async def api_job_create(payload: dict):
+    mode = (payload.get("mode") or "clone").lower()
+    if mode not in cfg.KINDS:
+        return _err(f"未知的生成模式：{mode}")
+    if not (payload.get("text") or "").strip():
+        return _err("请先输入要合成的文本。")
+
+    # 临时上传的参考音频：前端只知道 web/_uploads/ 下的文件名（那是它能拿到的最小信息），
+    # 而 core 需要绝对路径。翻译在这一层做，前端就不必知道服务器的目录结构。
+    up = payload.get("ref_upload")
+    if up:
+        p = cfg.UPLOAD_DIR / _safe(up)
+        if not p.exists():
+            return _err("临时上传的参考音频已失效，请重新上传。")
+        payload["ref_audio"] = str(p)
+
+    jid = _new_job("synth", payload)
+    return _ok(job=jid)
+
+
+@app.get("/api/jobs/{jid}")
+def api_job_status(jid: str):
+    job = _JOBS.get(jid)
+    if not job:
+        return _err("任务不存在或已过期。", 404)
+    return {"ok": True, **job}
+
+
+# ---------------------------------------------------------------------------
+# 官方说话人试听
+# ---------------------------------------------------------------------------
+@app.post("/api/speakers/{name}/preview")
+async def api_speaker_preview(name: str, payload: dict | None = None):
+    """试听官方说话人的样例音频。
+
+    样例得真跑一次模型才有，所以**缓存命中就直接给 URL**，没命中才排后台任务；
+    响应里 url 与 job 必有其一，前端两条路都要认。
+    """
+    key = _safe(name).lower()
+    if key not in cfg.SPEAKER_NAMES:
+        return _err(f"没有这个官方说话人：{name}")
+    size = cfg.resolve_size((payload or {}).get("size"))
+    path = core.speaker_preview_path(key, size)
+    if path.exists():
+        return _ok(speaker=key, url=f"/media/preview/{path.name}", cached=True)
+    return _ok(speaker=key, job=_new_job("preview", {"speaker": key, "size": size}))
+
+
+# ---------------------------------------------------------------------------
+# 合成记录
+# ---------------------------------------------------------------------------
+@app.get("/api/history")
+def api_history(limit: int = 0):
+    return {"ok": True, "history": history_mod.list_all(limit)}
+
+
+@app.post("/api/history/delete")
+async def api_history_delete(payload: dict):
+    return _ok(removed=history_mod.delete(payload.get("ids") or []))
+
+
+@app.post("/api/history/clear")
+async def api_history_clear():
+    return _ok(removed=history_mod.clear())
+
+
+# ---------------------------------------------------------------------------
+# 媒体
+# ---------------------------------------------------------------------------
+@app.get("/media/out/{name}")
+def media_out(name: str):
+    p = cfg.OUTPUT_DIR / _safe(name)
+    if not p.exists():
+        raise HTTPException(404, "文件不存在")
+    return FileResponse(str(p), media_type="audio/wav")
+
+
+@app.get("/media/upload/{name}")
+def media_upload(name: str):
+    p = cfg.UPLOAD_DIR / _safe(name)
+    if not p.exists():
+        raise HTTPException(404, "文件不存在")
+    return FileResponse(str(p))
+
+
+@app.get("/media/voice/{name}")
+def media_voice(name: str):
+    p = voices_mod.path_of(_safe(name), voices_mod.WAV_EXT)
+    if not p.exists():
+        raise HTTPException(404, "音色不存在")
+    return FileResponse(str(p), media_type="audio/wav")
+
+
+@app.get("/media/preview/{name}")
+def media_preview(name: str):
+    p = cfg.PREVIEW_DIR / _safe(name)
+    if not p.exists():
+        raise HTTPException(404, "试听文件不存在")
+    return FileResponse(str(p), media_type="audio/wav")
+
+
+# ---------------------------------------------------------------------------
+# 文档与前端
+# ---------------------------------------------------------------------------
+@app.get("/api/docs")
+def api_docs(request: Request):
+    """接口清单：以 api_docs.py 为内容来源，并与真实路由对账。
+
+    只把「本工具自己登记的业务路由」纳入对账范围。FastAPI 内置的
+    /openapi.json 也一并纳入 —— 它在 api_docs.ENDPOINTS 里是声明过的，
+    若不收进来会被误报成「文档写了但路由不存在」。
+    """
+    real = {(r.path, tuple(sorted(getattr(r, "methods", []) or [])))
+            for r in app.routes
+            if getattr(r, "path", "") in ("/openapi.json",)
+            or getattr(r, "path", "").startswith(("/api", "/media"))}
+    # 去掉 FastAPI 自动为 GET 路由附加的 HEAD
+    real = {(p, tuple(m for m in ms if m.upper() != "HEAD")) for p, ms in real}
+    return {"ok": True, **api_docs_mod.render(real)}
+
+
+@app.get("/")
+def index():
+    if not _INDEX.exists():
+        return JSONResponse({"error": "找不到 web/static/index.html"}, status_code=500)
+    return FileResponse(str(_INDEX), media_type="text/html; charset=utf-8")
+
+
+@app.get("/favicon.ico")
+def favicon():
+    # 必须返回**没有 body** 的 204。早先这里写的是 JSONResponse({}, 204)：
+    # 它带了个 b"{}" 的 body 和 Content-Length: 2，而 204 按规范不允许有 body，
+    # httptools 会直接抛 "Response content longer than Content-Length"。
+    return Response(status_code=204)
+
+
+# ---------------------------------------------------------------------------
+# 启动
+# ---------------------------------------------------------------------------
+def main() -> int:
+    try:
+        sys.stdout.reconfigure(errors="replace")
+    except Exception:  # noqa: BLE001
+        pass
+
+    import uvicorn
+
+    p = cfg.profile()
+    missing = cfg.missing_models()
+    print("=" * 66)
+    print("  Qwen3-TTS Studio")
+    print(f"  界面  http://{cfg.HOST}:{cfg.PORT}")
+    print(f"  档位  {p.short()}")
+    print(f"  音色  {len(voices_mod.list_voices())} 个 · 输出 {cfg.OUTPUT_DIR}")
+    if missing:
+        print(f"  [警告] 缺少权重：{', '.join(missing)}")
+    for n in p.notes:
+        print(f"  · {n}")
+    print("=" * 66)
+    uvicorn.run(app, host=cfg.HOST, port=cfg.PORT, log_level="warning")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

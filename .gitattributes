@@ -1,0 +1,9 @@
+# 这个仓库里的文件**一律按字节存**，换行符原样进出。
+#
+# 原因：这个项目里的行尾是各文件自己的约定，不是 git 的：
+#   *.bat  —— GBK 编码 + CRLF，手工维护，中文注释在 cmd 里靠这个（见 MEMORY.md 铁律）
+#   *.py / *.md / index.html —— CRLF
+# 一旦让 git 去「规范化」换行符（text 属性或 core.autocrlf=true），
+# 检出时可能把 CRLF 变成 LF，cmd 里的中文就可能读花。
+* -text
+*.bat -text

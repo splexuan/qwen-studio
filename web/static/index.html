@@ -1,0 +1,4064 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Qwen3-TTS Studio</title>
+<!--
+  Qwen3-TTS Studio · 工作台前端（单文件，零外部依赖）。
+
+  七个视图：
+    clone     语音克隆 —— 参考音频 / 固化音色 + 自由文本情感指令
+    design    声音设计 —— 用文字描述捏一个不存在的音色
+    official  官方音色 —— 9 个内置说话人，支持多人对话与逐句情感
+    script    剧本工坊 —— 多角色长剧本，逐句调用音色库
+    library   音色库   —— 上传 / 裁剪 / 参考文本 / 音色基因
+    history   合成记录
+    api       API 对接
+
+  设计与 omnivoice-studio 同源：同一套颜色 / 圆角 / 阴影令牌，
+  浅深两套主题只换令牌、不动组件。所有数据都来自 web/server.py，
+  本文件不含任何硬编码的模型逻辑。
+
+  **新功能一律改这里。** 改大手术前先丢一份到 .workbuddy/backup/。
+-->
+
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%235B57E8'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M8 13v6M12 9v14M16 12v8M20 10v12M24 14v4'/%3E%3C/g%3E%3C/svg%3E">
+<style>
+/* ============================================================================
+   Qwen3-TTS Studio · 令牌
+   与 omnivoice-studio 完全一致：中性色 + 品牌紫蓝 + 四级圆角 + 三层阴影。
+   组件层只引用令牌，所以换主题 = 换这一块。
+   ============================================================================ */
+:root{
+  color-scheme:light;
+  /* —— 中性 —— */
+  --bg:#F5F6FA; --bg-2:#EEF0F7;
+  --surface:#FFFFFF; --surface-2:#F4F6FB; --surface-3:#E9ECF5;
+  --text:#111420; --text-2:#4A5266; --text-3:#7B8399;
+  --line:#E8EAF3; --line-2:#D6DAE8;
+  --wave:#C4CADD;
+  /* —— 强调 —— */
+  --accent:#5B57E8; --accent-hover:#4A46DA; --accent-press:#3F3BC7;
+  --accent-soft:#EEEDFE; --accent-soft-2:#E4E2FC; --accent-line:#D8D6FA;
+  --on-accent:#FFFFFF;
+  /* —— 剧本框里染字的颜色 ——
+     不是 --accent / --warn 本身：那两个是给**色块和图标**用的，对白底只有约 4.5:1，
+     拿它们当 14px 汉字的前景色会发虚。这两个是各自压深一档的结果，对白底约 6.6:1。 */
+  --ink-role:#3F3BC7; --ink-inst:#7A4E00;
+  /* —— 语义 —— */
+  --ok:#0E9E64;    --ok-soft:#E6F7EF;   --ok-line:#BEE8D3;
+  --warn:#A26800;  --warn-soft:#FDF3E0; --warn-line:#F0DAB0;
+  --err:#D2414E;   --err-soft:#FDECEE;  --err-line:#F4C7CC;
+  --info:#2E6CD8;  --info-soft:#EAF1FD; --info-line:#C6D9F6;
+  /* —— 圆角 —— */
+  --r-xs:6px; --r-sm:9px; --r:12px; --r-lg:16px; --r-xl:22px; --r-full:999px;
+  /* —— 阴影 —— */
+  --sh-1:0 1px 2px rgba(17,22,38,.05), 0 1px 3px rgba(17,22,38,.04);
+  --sh-2:0 2px 6px rgba(17,22,38,.05), 0 10px 26px -12px rgba(17,22,38,.16);
+  --sh-3:0 20px 52px -18px rgba(17,22,38,.30);
+  --ring:0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  /* —— 字体 —— */
+  --f:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sidebar-w:252px;
+}
+html[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#0A0C12; --bg-2:#0E1119;
+  --surface:#13161F; --surface-2:#191D28; --surface-3:#212634;
+  --text:#E9ECF4; --text-2:#A6AEC2; --text-3:#727B92;
+  --line:#212736; --line-2:#2D3546;
+  --wave:#39405280;
+  --accent:#8E8AFF; --accent-hover:#A3A0FF; --accent-press:#B6B4FF;
+  --accent-soft:#1B1A38; --accent-soft-2:#242252; --accent-line:#332F63;
+  --on-accent:#0A0C12;
+  /* 深色底上反过来：要比 --accent / --warn 再**提亮**一档才够对比度 */
+  --ink-role:#A9A6FF; --ink-inst:#E8C078;
+  --ok:#5FCB96;    --ok-soft:#0F2318;   --ok-line:#1D4231;
+  --warn:#E0B063;  --warn-soft:#271E0D; --warn-line:#463614;
+  --err:#F0949C;   --err-soft:#291413;  --err-line:#4E2526;
+  --info:#8FB5EC;  --info-soft:#101B2B; --info-line:#22354E;
+  --sh-1:0 1px 2px rgba(0,0,0,.4);
+  --sh-2:0 2px 6px rgba(0,0,0,.4), 0 12px 28px -14px rgba(0,0,0,.7);
+  --sh-3:0 24px 60px -20px rgba(0,0,0,.8);
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; background:var(--bg); color:var(--text);
+  font-family:var(--f); font-size:14px; line-height:1.6;
+  -webkit-font-smoothing:antialiased; font-variant-numeric:tabular-nums;
+}
+h1,h2,h3{margin:0; font-weight:600; letter-spacing:-.01em; line-height:1.3}
+button,input,select,textarea{font:inherit; color:inherit}
+a{color:var(--accent); text-decoration:none}
+.hidden{display:none !important}
+.sp{margin-left:auto}
+:focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:var(--r-xs)}
+::selection{background:var(--accent-soft-2)}
+
+/* ============================ 应用外壳 ============================ */
+.shell{display:grid; grid-template-columns:var(--sidebar-w) minmax(0,1fr); min-height:100vh}
+.sidebar{
+  position:sticky; top:0; height:100vh; display:flex; flex-direction:column;
+  gap:6px; padding:18px 14px 14px;
+  background:var(--surface); border-right:1px solid var(--line);
+}
+.brand{display:flex; align-items:center; gap:11px; padding:6px 8px 16px}
+.mark{
+  flex:0 0 auto; width:34px; height:34px; border-radius:10px;
+  background:linear-gradient(150deg, var(--accent), color-mix(in srgb, var(--accent) 62%, #9C6BFF));
+  display:grid; place-items:center; color:#fff; box-shadow:var(--sh-1);
+}
+.brand__t{flex:1; min-width:0}
+.brand__t h1{font-size:15px; font-weight:700; letter-spacing:-.015em}
+.brand__t p{margin:1px 0 0; font-size:11.5px; color:var(--text-3);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+
+.nav{display:flex; flex-direction:column; gap:3px}
+.navitem{
+  display:flex; align-items:center; gap:11px; width:100%; cursor:pointer; text-align:left;
+  appearance:none; background:none; border:0; border-radius:var(--r-sm);
+  padding:9px 11px; font-size:13.5px; font-weight:500; color:var(--text-2);
+  transition:background .14s, color .14s;
+}
+.navitem svg{flex:0 0 auto; opacity:.9}
+.navitem:hover{background:var(--surface-2); color:var(--text)}
+.navitem[aria-current="page"]{background:var(--accent-soft); color:var(--accent); font-weight:600}
+.navitem[aria-current="page"] svg{opacity:1}
+.nav__sep{height:1px; background:var(--line); margin:9px 6px}
+
+.sidebar__foot{margin-top:auto; padding-top:12px; display:flex; flex-direction:column; gap:8px}
+.envchip{
+  display:flex; align-items:center; gap:9px; width:100%; cursor:pointer; text-align:left;
+  appearance:none; border:1px solid var(--line); background:var(--surface-2);
+  border-radius:var(--r-sm); padding:9px 10px; transition:border-color .14s, background .14s;
+}
+.envchip:hover{border-color:var(--line-2); background:var(--surface-3)}
+.dot{flex:0 0 auto; width:8px; height:8px; border-radius:50%; background:var(--ok);
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--ok) 20%, transparent)}
+.dot.cpu{background:var(--warn); box-shadow:0 0 0 3px color-mix(in srgb, var(--warn) 20%, transparent)}
+.envchip__t{min-width:0}
+.envchip__t b{display:block; font-size:12px; font-weight:600; color:var(--text)}
+.envchip__t span{display:block; font-size:11px; color:var(--text-3);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.iconbtn{
+  width:38px; height:38px; flex:0 0 auto; display:grid; place-items:center; cursor:pointer;
+  background:var(--surface); border:1px solid var(--line); border-radius:var(--r-sm);
+  color:var(--text-2); transition:background .14s, border-color .14s, color .14s;
+}
+.iconbtn:hover{background:var(--surface-2); color:var(--text); border-color:var(--line-2)}
+
+.main{min-width:0; display:flex; flex-direction:column}
+.content{flex:1; padding:0 34px 72px; max-width:1400px; width:100%; margin:0 auto}
+
+/* ============================ 页面标题栏 ============================ */
+.pagehead{display:flex; align-items:flex-end; gap:20px; flex-wrap:wrap; padding:34px 0 20px}
+.pagehead__t{min-width:0; flex:1}
+.pagehead__t h1{font-size:26px; font-weight:700; letter-spacing:-.022em}
+.pagehead__t p{margin:6px 0 0; font-size:13.5px; color:var(--text-3); max-width:70ch}
+.pagehead__act{display:flex; align-items:center; gap:9px; flex-wrap:wrap}
+
+/* ============================ 布局 ============================ */
+.grid{display:grid; grid-template-columns:minmax(0,1fr) 384px; gap:26px; align-items:start}
+@media (max-width:1220px){ .grid{grid-template-columns:minmax(0,1fr)} .rail{position:static !important} }
+.stack{display:flex; flex-direction:column; gap:16px; min-width:0}
+.rail{position:sticky; top:22px; display:flex; flex-direction:column; gap:16px}
+.railact{display:flex; flex-direction:column; gap:6px}
+
+/* ============================ 卡片 ============================ */
+.card{background:var(--surface); border-radius:var(--r-lg); box-shadow:var(--sh-1); overflow:hidden}
+.card--lift{box-shadow:var(--sh-2)}
+.card__head{display:flex; align-items:center; gap:10px; padding:16px 20px 0}
+.card__head h2{font-size:14.5px; font-weight:650}
+.card__body{padding:16px 20px 20px}
+.card__body--flush{padding:0}
+.stepnum{
+  flex:0 0 auto; width:22px; height:22px; border-radius:7px;
+  background:var(--accent-soft); color:var(--accent);
+  display:grid; place-items:center; font-size:11.5px; font-weight:700;
+}
+.hint{margin:0; font-size:12.5px; color:var(--text-3); line-height:1.6}
+.hint--warn{color:var(--warn)}
+.row-between{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
+/* 一行两件：输入框吃掉剩余宽度，右边的按钮不缩也不换行 */
+.row-fill{display:flex; align-items:center; gap:8px}
+.row-fill > .input{flex:1 1 auto; min-width:0}
+.row-fill > .btn{flex:0 0 auto}
+.mt{margin-top:14px}
+.link{appearance:none; background:none; border:0; padding:0; cursor:pointer;
+  color:var(--accent); font-size:12.5px; font-weight:500}
+.link:hover{text-decoration:underline; text-underline-offset:2px}
+
+/* ============================ 表单 ============================ */
+.field{display:flex; flex-direction:column; gap:7px}
+.field + .field{margin-top:14px}
+.field > label,.lbl{font-size:12.5px; font-weight:600; color:var(--text-2)}
+.lbl-opt{font-weight:400; color:var(--text-3)}
+.input,.textarea,.select-native{
+  width:100%; background:var(--surface); color:var(--text);
+  border:1px solid var(--line-2); border-radius:var(--r-sm); padding:10px 12px;
+  transition:border-color .14s, box-shadow .14s;
+}
+.input{height:40px}
+.input:hover,.textarea:hover,.select-native:hover{border-color:var(--text-3)}
+.input:focus,.textarea:focus,.select-native:focus{outline:none; border-color:var(--accent); box-shadow:var(--ring)}
+.input::placeholder,.textarea::placeholder{color:var(--text-3)}
+.textarea{resize:vertical; min-height:120px; line-height:1.68; font-size:14.5px}
+/* 参考文本一般是「一两句」，但**换行是有意义的**（完整 ICL 要逐字对齐音频），
+   所以不能用单行 input —— 单行 input 在粘贴时会把换行**压成空格**，
+   粘进来的就不再是原话了。矮一点的 textarea，需要时还能往下拖。 */
+.textarea--slim{min-height:0; height:auto; padding:8px 12px; line-height:1.6}
+.textarea--mono{font-family:var(--mono); font-size:12.5px; line-height:1.9; min-height:210px}
+
+/* ====================== 剧本框：一层高亮 + 一层 textarea ======================
+   想让输入框里的角色/情绪/台词分色，又不想丢掉 textarea 的原生行为
+   （撤销、输入法、选区、粘贴、草稿读取），就**叠一层**：
+   上面是真正的 textarea（文字透明，只留光标和选区），
+   下面是一份按同一套排版规则渲染的彩色副本。
+   两层必须**逐字符对齐** —— 字体/字号/行高/内边距/white-space 一个都不能差，
+   差一点就会看到文字「重影」。所以这些属性写在一起，改的时候两边一起改。 */
+.codebox{
+  position:relative; background:var(--surface);
+  border:1px solid var(--line-2); border-radius:var(--r-sm);
+  transition:border-color .14s, box-shadow .14s;
+}
+.codebox:focus-within{border-color:var(--accent); box-shadow:var(--ring)}
+/* 字号字体跟页面上别的文本框对齐（14.5px / 正文那套字体），不要再用等宽 ——
+   等宽栈对中文没有对应字形，落到系统回退字体上会比正文更小更挤，
+   这正是用户说的「文字小」。 */
+.codebox__hl,.codebox__ta{
+  margin:0; border:0; padding:12px 14px;
+  font-family:var(--f); font-size:14.5px; line-height:1.8;
+  white-space:pre-wrap; overflow-wrap:break-word; letter-spacing:0;
+}
+.codebox__hl{
+  position:absolute; top:0; left:0; z-index:0; overflow:hidden;
+  pointer-events:none; color:var(--text);
+}
+.codebox__ta{
+  position:relative; z-index:1; display:block; width:100%; min-height:262px;
+  background:transparent; color:transparent; caret-color:var(--text);
+  resize:vertical; overflow:auto; outline:none;
+}
+/* 占位符不能用透明色，否则一个都看不见 */
+.codebox__ta::placeholder{color:var(--text-3); opacity:1}
+/* 选区必须是**半透明**的：高亮层在下面，不透明就把彩色文字整块盖住了 */
+.codebox__ta::selection{background:rgba(120,124,235,.30)}
+/* 输入法拼字期间反过来 —— 拼字串是 textarea 自己画的，
+   文字透明就什么都看不见。这一小段时间让 textarea 显字、把高亮层收起来，
+   等拼完再换回来（颜色晚一步，但至少看得见自己在打什么）。 */
+.codebox.is-composing .codebox__ta{color:var(--text)}
+.codebox.is-composing .codebox__hl{visibility:hidden}
+
+/* 行内着色：角色、情感指令各换一个颜色（见 --ink-*，不是直接拿 --accent/--warn），
+   台词不动 —— 它是主体。行是**一行一个 div** 的，所以能单独给某一行刷底色。 */
+/* min-height 必须**等于行高**（1.8em = line-height:1.8），空行才占得住位置 ——
+   这跟上面那句共用同一个数字，改行高时两处一起改。 */
+.hl-line{min-height:1.8em; border-radius:4px}
+.hl-line.is-bad{background:var(--err-soft); box-shadow:inset 2px 0 0 var(--err)}
+/* 加粗用 700 而不是 650：中文得落在**真实的 Bold 字面**上（雅黑 Bold / 苹方 Semibold）。
+   650 这类中间值有可能落到合成粗体（把笔画描粗一圈），反而糊。
+   字体栈是 var(--f)，里面明确列了中文字体，所以 700 拿得到真 Bold。 */
+.hl-role{color:var(--ink-role); font-weight:700}
+.hl-inst{color:var(--ink-inst); font-weight:700}
+.select-native{height:40px; appearance:none; cursor:pointer;
+  background-image:linear-gradient(45deg,transparent 50%,var(--text-3) 50%),linear-gradient(135deg,var(--text-3) 50%,transparent 50%);
+  background-position:calc(100% - 17px) 17px,calc(100% - 12px) 17px;
+  background-size:5px 5px,5px 5px; background-repeat:no-repeat; padding-right:34px}
+.two{display:grid; grid-template-columns:1fr 1fr; gap:14px}
+@media (max-width:640px){ .two{grid-template-columns:1fr} }
+
+input[type=range]{
+  -webkit-appearance:none; appearance:none; width:100%; height:4px; border-radius:var(--r-full);
+  background:var(--surface-3); cursor:pointer; margin:9px 0 4px;
+}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none; width:16px; height:16px; border-radius:50%;
+  background:var(--accent); border:2px solid var(--surface); box-shadow:var(--sh-1); cursor:grab;
+}
+input[type=checkbox]{width:15px; height:15px; accent-color:var(--accent); cursor:pointer; margin:0}
+.check{display:flex; align-items:center; gap:9px; font-size:13px; color:var(--text-2); cursor:pointer}
+.switchrow{display:flex; align-items:flex-start; gap:11px; padding:12px 13px;
+  border:1px solid var(--line); border-radius:var(--r-sm); background:var(--surface-2)}
+.switchrow .check{flex:0 0 auto}
+.switchrow__t{min-width:0; flex:1}
+.switchrow__t b{display:block; font-size:13px; font-weight:600}
+.switchrow__t span{display:block; font-size:12px; color:var(--text-3); margin-top:2px; line-height:1.6}
+
+/* ============================ 按钮 ============================ */
+.btn{
+  display:inline-flex; align-items:center; justify-content:center; gap:7px;
+  height:38px; padding:0 15px; cursor:pointer; white-space:nowrap;
+  border:1px solid transparent; border-radius:var(--r-sm);
+  font-size:13.5px; font-weight:550; letter-spacing:-.005em;
+  transition:background .14s, border-color .14s, color .14s, box-shadow .14s, transform .08s;
+}
+.btn:active{transform:translateY(1px)}
+.btn--primary{background:var(--accent); color:var(--on-accent);
+  box-shadow:0 1px 2px color-mix(in srgb, var(--accent) 40%, transparent)}
+.btn--primary:hover{background:var(--accent-hover)}
+.btn--primary:active{background:var(--accent-press)}
+.btn--outline{background:var(--surface); color:var(--text); border-color:var(--line-2)}
+.btn--outline:hover{background:var(--surface-2); border-color:var(--text-3)}
+.btn--soft{background:var(--accent-soft); color:var(--accent)}
+.btn--soft:hover{background:var(--accent-soft-2)}
+.btn--ghost{background:transparent; color:var(--text-2)}
+.btn--ghost:hover{background:var(--surface-2); color:var(--text)}
+.btn--danger{background:var(--err-soft); color:var(--err); border-color:var(--err-line)}
+.btn--danger:hover{background:var(--err); color:#fff; border-color:var(--err)}
+.btn--lg{height:46px; padding:0 24px; font-size:15px; border-radius:var(--r)}
+.btn--sm{height:30px; padding:0 10px; font-size:12.5px; border-radius:var(--r-xs)}
+.btn--block{width:100%}
+.btn:disabled{background:var(--surface-3); color:var(--text-3); border-color:transparent;
+  cursor:not-allowed; box-shadow:none; transform:none}
+.btn:disabled:hover{background:var(--surface-3)}
+html[data-theme="dark"] .btn--danger:hover{color:var(--bg)}
+
+/* ============================ 徽章 / 标签 ============================ */
+.pill{display:inline-flex; align-items:center; gap:5px;
+  font-size:11.5px; font-weight:600; padding:3px 9px; border-radius:var(--r-full);
+  background:var(--surface-2); color:var(--text-3)}
+.pill--ok{background:var(--ok-soft); color:var(--ok)}
+.pill--warn{background:var(--warn-soft); color:var(--warn)}
+.pill--err{background:var(--err-soft); color:var(--err)}
+.pill--info{background:var(--info-soft); color:var(--info)}
+.pill--accent{background:var(--accent-soft); color:var(--accent)}
+.pill[data-state="running"]{background:var(--info-soft); color:var(--info)}
+.pill[data-state="done"]{background:var(--ok-soft); color:var(--ok)}
+.pill[data-state="error"]{background:var(--err-soft); color:var(--err)}
+.pill[data-state="warn"]{background:var(--warn-soft); color:var(--warn)}
+
+/* ====================== 音色选择按钮 + 选择弹窗 ======================
+   以前「选音色」是把整个音色库铺成一排芯片贴在页面上。音色十几个还行，
+   上了三十个就是堵墙，而且每多存一个音色、所有页面都得跟着长一截。
+   现在收成一个按钮：长得像下拉框，点开是弹窗 —— 搜索框、克隆方式筛选、
+   列表都在里头，弹窗本身高度封顶，页面再也不会被音色数量撑变形。 */
+.pickbtn{
+  width:100%; height:40px; display:flex; align-items:center; gap:10px; text-align:left;
+  cursor:pointer; appearance:none; color:var(--text);
+  background:var(--surface); border:1px solid var(--line-2); border-radius:var(--r-sm);
+  padding:0 12px; transition:border-color .14s, box-shadow .14s;
+}
+.pickbtn:hover{border-color:var(--text-3)}
+.pickbtn:focus-visible{outline:none; border-color:var(--accent); box-shadow:var(--ring)}
+.pickbtn__k{flex:0 0 auto; font-size:12.5px; color:var(--text-3)}
+.pickbtn__v{
+  flex:1 1 auto; min-width:0; font-size:14px; font-weight:650; color:var(--accent);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.pickbtn__v.is-empty{color:var(--text-3); font-weight:400}
+.pickbtn__c{flex:0 0 auto; color:var(--text-3)}
+
+/* 计数不能跟着输入框一起被挤：挤窄了「共 18 个」会折成两行 */
+.vpick__count{flex:0 0 auto; white-space:nowrap}
+.vpick{display:flex; flex-direction:column; gap:6px; margin-top:12px; max-height:46vh; overflow-y:auto}
+.vrow{
+  width:100%; display:flex; align-items:center; gap:10px; text-align:left; cursor:pointer;
+  appearance:none; background:var(--surface-2); color:var(--text);
+  border:1.5px solid transparent; border-radius:var(--r-sm); padding:9px 12px;
+  transition:border-color .14s, background .14s;
+}
+.vrow:hover{border-color:var(--accent-line); background:var(--surface)}
+.vrow.is-on{border-color:var(--accent); background:var(--accent-soft)}
+.vrow__n{
+  flex:0 0 auto; max-width:46%; font-size:13.5px; font-weight:650; color:var(--accent);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.vrow__m{
+  flex:1 1 auto; min-width:0; font-size:11.5px; color:var(--text-3);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.vrow__ck{flex:0 0 auto; font-size:11px; font-weight:650; color:var(--accent)}
+.vpick__empty{padding:22px 4px; text-align:center; color:var(--text-3); font-size:13px; line-height:1.8}
+
+/* ============================ 折叠区 ============================ */
+.acc{border-top:1px solid var(--line)}
+.acc:first-of-type{border-top:0}
+.acc > summary{list-style:none; cursor:pointer; padding:14px 20px;
+  display:flex; align-items:center; gap:9px;
+  font-size:13.5px; font-weight:600; color:var(--text); transition:background .14s}
+.acc > summary::-webkit-details-marker{display:none}
+.acc > summary:hover{background:var(--surface-2)}
+.acc > summary::before{content:""; flex:0 0 auto; width:6px; height:6px; margin-right:2px;
+  border-right:1.6px solid var(--text-3); border-bottom:1.6px solid var(--text-3);
+  transform:rotate(-45deg); transition:transform .16s}
+.acc[open] > summary::before{transform:rotate(45deg)}
+.acc__body{padding:2px 20px 20px}
+.acc__note{margin-left:auto; font-size:11.5px; font-weight:500; color:var(--text-3)}
+
+/* ============================ 波形编辑器 / 播放器 ============================ */
+.editor{border:1px solid var(--line); border-radius:var(--r); background:var(--surface); overflow:hidden}
+.ed-head{display:flex; align-items:center; gap:10px; padding:10px 13px;
+  border-bottom:1px solid var(--line); font-size:12.5px; color:var(--text-2)}
+.ed-name{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:550}
+.ed-len{flex:0 0 auto; color:var(--text-3)}
+.ed-wave{position:relative; height:104px; background:var(--surface-2);
+  cursor:crosshair; touch-action:none; user-select:none}
+.ed-wave:focus-visible{outline:2px solid var(--accent); outline-offset:-2px}
+.ed-wave canvas{position:absolute; inset:0; width:100%; height:100%; display:block; z-index:0}
+.ed-dim{position:absolute; top:0; bottom:0; z-index:1; pointer-events:none;
+  background:color-mix(in srgb, var(--bg) 62%, transparent)}
+.ed-sel{position:absolute; top:0; bottom:0; z-index:2; pointer-events:none;
+  background:color-mix(in srgb, var(--accent) 10%, transparent);
+  border-left:2px solid var(--accent); border-right:2px solid var(--accent)}
+.ed-play{position:absolute; top:0; bottom:0; width:2px; z-index:3; pointer-events:none;
+  background:var(--accent); opacity:.85; display:none}
+.ed-play.on{display:block}
+.ed-h{position:absolute; top:0; bottom:0; width:20px; z-index:4; padding:0; margin:0;
+  transform:translateX(-50%); background:none; border:0; cursor:ew-resize}
+.ed-h::after{content:""; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+  width:12px; height:12px; border-radius:50%; background:var(--accent);
+  border:2.5px solid var(--surface); box-shadow:var(--sh-1); transition:transform .12s}
+.ed-h:hover::after,.ed-h:focus-visible::after{transform:translate(-50%,-50%) scale(1.25)}
+.ed-foot{display:flex; align-items:center; gap:8px; padding:11px 13px; flex-wrap:wrap}
+.ed-read{font-size:12.5px; color:var(--text-2)}
+.ed-note{margin:0; padding:0 13px 13px; font-size:12.5px}
+.ed-note.warn{color:var(--warn)}
+.ed-note.ok{color:var(--ok)}
+
+.wpl{border:1px solid var(--line); border-radius:var(--r); background:var(--surface); overflow:hidden}
+.wpl-head{display:flex; align-items:center; gap:10px; row-gap:8px; flex-wrap:wrap;
+  padding:10px 12px; border-bottom:1px solid var(--line)}
+.wpl-wave{height:78px; cursor:pointer}
+.wpl-wave.nodata::after{content:"波形不可用"; position:absolute; inset:0; display:grid;
+  place-items:center; font-size:12px; color:var(--text-3); z-index:5}
+/* 播放进度：**已播**部分叠一层强调色，**未播**部分压一层背景色遮罩。
+   两者叠加后「播到哪了」一眼可见 —— 只叠强调色的话，
+   在浅色主题下那块淡紫很容易被误读成波形本身的配色。 */
+.wpl-prog{position:absolute; top:0; bottom:0; left:0; width:0; z-index:1; pointer-events:none;
+  background:color-mix(in srgb, var(--accent) 22%, transparent)}
+.wpl-rest{position:absolute; top:0; bottom:0; right:0; left:0; z-index:1; pointer-events:none;
+  background:color-mix(in srgb, var(--bg) 54%, transparent)}
+.pbtn{width:38px; height:38px; flex:0 0 auto; border-radius:50%; cursor:pointer;
+  background:var(--accent); border:0; color:var(--on-accent); display:grid; place-items:center;
+  transition:background .14s}
+.pbtn:hover{background:var(--accent-hover)}
+.ptime{flex:0 0 auto; font-size:12.5px; color:var(--text-3)}
+
+/* ============================ 结果区 ============================ */
+.result__idle{display:flex; flex-direction:column; align-items:center; gap:14px;
+  padding:30px 22px 32px; text-align:center}
+.orb{width:66px; height:66px; border-radius:50%; display:grid; place-items:center;
+  background:var(--surface-2); color:var(--text-3)}
+.result__idle p{margin:0; font-size:13px; color:var(--text-2); line-height:1.7}
+.metrics{display:flex; flex-wrap:wrap; gap:6px; margin:14px 0}
+.metric{background:var(--surface-2); border-radius:var(--r-xs); padding:5px 9px; max-width:100%;
+  font-size:11.5px; color:var(--text-3)}
+.metric b{color:var(--text); font-weight:650; margin-left:5px; overflow-wrap:anywhere}
+.params{padding:0 20px 18px}
+.params.is-first{padding-top:18px}
+/* 结果卡底部的动作区（目前只有声音设计的「存进音色库」）。
+   压在参数区下面：先看清这次用的是什么参数，再决定要不要把它留下来。 */
+.result__acts{padding:0 20px 18px; display:flex; align-items:center; gap:10px; flex-wrap:wrap}
+.result__acts .hint{flex:1 1 220px; min-width:0}
+/* 参数区：键值同一行（上下两行太占地方），标签定宽让右列的值左右对齐 */
+.pmeta__t{font-size:11.5px; font-weight:650; color:var(--text-3); letter-spacing:.04em; margin-bottom:7px}
+.pmeta{display:grid; grid-template-columns:1fr 1fr; gap:7px 16px}
+.pmeta__c{min-width:0; display:flex; align-items:baseline; gap:8px}
+.pmeta__c.is-wide{grid-column:1 / -1}
+.pmeta__c i{flex:0 0 4.3em; font-style:normal; font-size:11.5px; color:var(--text-3)}
+.pmeta__c b{min-width:0; font-size:12.5px; font-weight:600; overflow-wrap:anywhere}
+.run{padding:0 20px 18px}
+.bar{height:5px; border-radius:var(--r-full); background:var(--surface-3); overflow:hidden}
+.bar i{display:block; height:100%; width:0; border-radius:var(--r-full);
+  background:linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 60%, #A97BFF));
+  transition:width .35s ease}
+.bar.indet i{width:34%; animation:slide 1.25s cubic-bezier(.4,0,.2,1) infinite}
+@keyframes slide{0%{margin-left:-34%}100%{margin-left:100%}}
+.run__msg{margin:10px 0 0; font-size:12.5px; color:var(--text-2); white-space:pre-line}
+
+/* ============================ 提示条 ============================ */
+.notes{padding:0 20px 18px}
+.notes:empty{padding:0}
+.card__body .notes{padding-top:0}
+.note{display:flex; gap:10px; padding:11px 13px; border-radius:var(--r-sm); font-size:12.5px; line-height:1.6}
+.note + .note{margin-top:8px}
+.note .ic{flex:0 0 auto; width:17px; height:17px; border-radius:50%; display:grid;
+  place-items:center; font-size:11px; font-weight:700; color:#fff}
+.note .bd{min-width:0}
+.note .lb{font-weight:650; margin-right:6px}
+.note p{margin:0; overflow-wrap:break-word}
+.note--ok{background:var(--ok-soft); color:var(--ok)}      .note--ok .ic{background:var(--ok)}
+.note--warn{background:var(--warn-soft); color:var(--warn)} .note--warn .ic{background:var(--warn)}
+.note--error{background:var(--err-soft); color:var(--err)}  .note--error .ic{background:var(--err)}
+.note--info{background:var(--info-soft); color:var(--info)} .note--info .ic{background:var(--info)}
+
+/* ============================ 说话人卡（官方音色） ============================ */
+.spk{display:grid; grid-template-columns:repeat(auto-fill,minmax(196px,1fr)); gap:10px}
+/* 卡片从 <button> 换成容器：里面既要「选中」又要「试听」，按钮套按钮是非法结构。
+   外观与原来保持一致（空白分工交给内层按钮）。 */
+.spkcard{
+  position:relative; display:flex; align-items:center; gap:8px;
+  background:var(--surface); border:1.5px solid var(--line); border-radius:var(--r);
+  padding:10px 10px 10px 13px; box-shadow:var(--sh-1);
+  transition:border-color .16s, box-shadow .16s, transform .16s, background .16s;
+}
+.spkcard:hover{box-shadow:var(--sh-2); transform:translateY(-1px)}
+.spkcard.is-on{border-color:var(--accent); background:var(--accent-soft); box-shadow:var(--sh-2)}
+.spkcard__main{
+  flex:1 1 auto; min-width:0; text-align:left; cursor:pointer; appearance:none;
+  background:none; border:0; padding:0; font:inherit; color:inherit;
+}
+.spkcard b{display:block; font-size:13.5px; font-weight:650}
+.spkcard span{display:block; font-size:11.5px; color:var(--text-3); margin-top:3px; line-height:1.5}
+.spkcard.is-on span{color:var(--accent); opacity:.85}
+.spkcard__try{
+  flex:0 0 auto; width:30px; height:30px; border-radius:50%; cursor:pointer; padding:0;
+  display:grid; place-items:center;
+  background:var(--surface-2); border:1px solid var(--line); color:var(--text-2);
+  transition:color .16s, border-color .16s, background .16s;
+}
+.spkcard__try:hover{color:var(--accent); border-color:var(--accent); background:var(--surface)}
+.spkcard__try:disabled{opacity:.45; cursor:default}
+.spkcard.is-on .spkcard__try{background:var(--surface)}
+
+/* ============================ 音色库 ============================ */
+.vgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(258px,1fr)); gap:12px}
+.vitem{
+  position:relative; background:var(--surface); border-radius:var(--r);
+  padding:14px; box-shadow:var(--sh-1); border:1.5px solid transparent;
+  transition:box-shadow .16s, border-color .16s, transform .16s;
+}
+.vitem:hover{box-shadow:var(--sh-2); transform:translateY(-1px)}
+.vitem.is-sel{border-color:var(--accent); box-shadow:var(--sh-2)}
+.vitem.is-picked{border-color:var(--accent-line); background:var(--accent-soft)}
+.vitem__top{display:flex; align-items:center; gap:8px}
+/* 名字是这一屏唯一的检索目标：卡片长得都一样，眼睛是顺着名字找的。
+   给它强调色，满屏灰字里才跳得出来。 */
+.vitem__name{font-size:14px; font-weight:650; min-width:0; color:var(--accent);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.vitem__ref{margin:9px 0 0; font-size:12.5px; color:var(--text-3); line-height:1.6;
+  white-space:pre-line;   /* 参考文本里的换行是真换行，别在卡片上折成空格 */
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; min-height:40px}
+.vitem__foot{display:flex; align-items:center; gap:6px; margin-top:12px; flex-wrap:wrap}
+.vcheck{position:absolute; top:13px; right:13px; opacity:0; transition:opacity .14s}
+.vitem:hover .vcheck,.vitem.is-picked .vcheck{opacity:1}
+.durpill.long{background:var(--warn-soft); color:var(--warn)}
+
+/* ============================ 剧本预览 ============================ */
+.scriptpre{display:flex; flex-direction:column; gap:0; max-height:320px; overflow:auto}
+.sline{display:flex; align-items:baseline; gap:9px; padding:8px 12px;
+  border-bottom:1px solid var(--line); font-size:13px}
+.sline:last-child{border-bottom:0}
+.sline__r{flex:0 0 auto; font-weight:650; color:var(--accent); font-size:12.5px; min-width:5.5em}
+.sline__i{flex:0 0 auto; font-size:11.5px; color:var(--warn);
+  background:var(--warn-soft); padding:1px 7px; border-radius:var(--r-full)}
+.sline__c{min-width:0; flex:1; color:var(--text-2); overflow-wrap:anywhere}
+.sline.bad{background:var(--err-soft)}
+.sline.bad .sline__c{color:var(--err)}
+.sline__n{flex:0 0 auto; font-size:11px; color:var(--text-3); min-width:1.8em; text-align:right}
+
+/* ============================ 合成记录 ============================ */
+.hlist{display:flex; flex-direction:column; gap:22px}
+.hgroup__t{display:flex; align-items:center; gap:10px; margin:0 0 10px;
+  font-size:12px; font-weight:650; color:var(--text-3); letter-spacing:.04em}
+.hgroup__t::after{content:""; flex:1; height:1px; background:var(--line)}
+.hrows{display:flex; flex-direction:column; gap:10px}
+.hrow{background:var(--surface); border-radius:var(--r); padding:15px 17px;
+  box-shadow:var(--sh-1); transition:box-shadow .16s}
+.hrow:hover{box-shadow:var(--sh-2)}
+.hrow.gone{opacity:.7}
+.hrow__top{display:flex; align-items:center; gap:9px; flex-wrap:wrap}
+.hrow__voice{font-size:13.5px; font-weight:650}
+.hrow__instr{font-size:12px; color:var(--text-3)}
+.hrow__time{margin-left:auto; font-size:12px; color:var(--text-3); white-space:nowrap}
+.hrow__meta{display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+  margin-top:9px; font-size:12px; color:var(--text-3)}
+.hrow__meta span{white-space:nowrap}
+.hrow__params{display:flex; flex-wrap:wrap; gap:7px 16px; margin-top:10px; font-size:12px}
+.hrow__params span{display:inline-flex; align-items:baseline; gap:5px; white-space:nowrap}
+.hrow__params i{font-style:normal; color:var(--text-3)}
+.hrow__params b{font-weight:600; color:var(--text-2)}
+.hrow__text{margin:9px 0 0; font-size:13.5px; line-height:1.65;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden}
+.hrow.err .hrow__text{color:var(--err)}
+.hrow__acts{display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-top:12px}
+.hrow__slot{margin-top:12px}
+.hrow__slot:empty{display:none}
+.empty{padding:52px 24px; text-align:center; color:var(--text-3); font-size:13px; line-height:1.9}
+.empty b{display:block; font-size:14.5px; color:var(--text-2); font-weight:650; margin-bottom:6px}
+.empty code{font-family:var(--mono); font-size:12px}
+.selectbar{display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  padding:11px 14px; border-radius:var(--r-sm); margin-bottom:14px; font-size:13px;
+  background:var(--accent-soft); color:var(--accent)}
+.confirmbar{display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  padding:11px 14px; border-radius:var(--r-sm); margin-bottom:14px; font-size:13px;
+  background:var(--err-soft); color:var(--err)}
+
+/* ============================ 落文件区 ============================ */
+.drop{
+  display:flex; align-items:center; gap:13px; width:100%; cursor:pointer; text-align:left;
+  background:var(--surface-2); border:1.5px dashed var(--line-2); border-radius:var(--r);
+  padding:16px; transition:border-color .16s, background .16s;
+}
+.drop:hover{border-color:var(--accent); background:var(--accent-soft)}
+.drop.over{border-color:var(--accent); background:var(--accent-soft); border-style:solid}
+.drop.has{border-style:solid; border-color:var(--accent-line); background:var(--accent-soft)}
+.drop__ic{flex:0 0 auto; width:40px; height:40px; border-radius:var(--r-sm);
+  background:var(--surface); display:grid; place-items:center; color:var(--text-3); box-shadow:var(--sh-1)}
+.drop.has .drop__ic{color:var(--accent)}
+.drop__t{min-width:0; flex:1}
+.drop__t b{display:block; font-size:13.5px; font-weight:600;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.drop__t span{display:block; font-size:12px; color:var(--text-3); margin-top:2px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.drop__x{flex:0 0 auto; border:0; background:none; color:var(--text-3); cursor:pointer;
+  padding:5px 7px; border-radius:var(--r-xs); font-size:16px; line-height:1}
+.drop__x:hover{background:var(--surface); color:var(--err)}
+
+/* ============================ 抽屉 / 弹窗 ============================ */
+.scrim{position:fixed; inset:0; z-index:90; background:rgba(11,14,22,.42);
+  opacity:0; pointer-events:none; transition:opacity .2s}
+.scrim.on{opacity:1; pointer-events:auto}
+.drawer{
+  position:fixed; z-index:100; top:0; right:0; bottom:0; width:min(430px, 92vw);
+  background:var(--surface); box-shadow:var(--sh-3);
+  transform:translateX(102%); transition:transform .26s cubic-bezier(.32,.72,0,1);
+  display:flex; flex-direction:column;
+}
+.drawer.on{transform:none}
+.drawer__head{display:flex; align-items:center; gap:10px; padding:18px 20px;
+  border-bottom:1px solid var(--line)}
+.drawer__head h2{font-size:15px; flex:1}
+.drawer__body{padding:18px 20px 26px; overflow:auto}
+
+.kv{width:100%; border-collapse:collapse; font-size:12.5px}
+.kv th,.kv td{padding:8px 2px; text-align:left; border-bottom:1px solid var(--line)}
+.kv th{font-weight:400; color:var(--text-3); width:42%}
+.kv tr:last-child th,.kv tr:last-child td{border-bottom:0}
+.kv code,.mono{font-family:var(--mono); font-size:12px; color:var(--accent)}
+
+.modal{border:0; padding:0; background:transparent; color:var(--text);
+  width:min(680px, calc(100vw - 32px)); max-height:calc(100vh - 44px)}
+.modal::backdrop{background:rgba(11,14,22,.5)}
+.modal__box{background:var(--surface); border-radius:var(--r-xl); box-shadow:var(--sh-3);
+  overflow:hidden; display:flex; flex-direction:column; max-height:calc(100vh - 44px)}
+.modal__head{display:flex; align-items:center; gap:10px; padding:18px 22px;
+  border-bottom:1px solid var(--line)}
+.modal__head h2{font-size:16px; flex:1}
+.modal__body{padding:20px 22px; overflow:auto}
+.modal__foot{display:flex; justify-content:flex-end; gap:10px; padding:14px 22px;
+  border-top:1px solid var(--line); background:var(--surface-2)}
+
+/* ============================ 提示浮层 ============================ */
+.toasts{position:fixed; z-index:200; right:22px; bottom:22px; display:flex;
+  flex-direction:column; gap:10px; align-items:flex-end; pointer-events:none}
+.toast{display:flex; align-items:center; gap:9px; padding:11px 15px; border-radius:var(--r-sm);
+  background:var(--surface); box-shadow:var(--sh-3); font-size:13px; font-weight:500;
+  border-left:3px solid var(--accent); animation:tin .24s ease; max-width:390px}
+@keyframes tin{from{opacity:0; transform:translateY(8px)}to{opacity:1; transform:none}}
+.toast--ok{border-left-color:var(--ok)}
+.toast--warn{border-left-color:var(--warn)}
+.toast--err{border-left-color:var(--err)}
+
+/* 悬停看全文的浮层（合成记录的正文被截成两行，原文得有个地方弹出来）。
+   不用 title 属性：它有一秒延迟、长文本换行难看、样式也改不了。
+   不能就地撑开列表 —— 列表一跳，鼠标底下那一行就换了，反而永远看不到想看的那条。
+   z-index 压在所有浮层之下（遮罩 90 / 抽屉 100 / toast 200），
+   弹窗是 <dialog> 走顶层，不受影响。 */
+.tip{
+  position:fixed; z-index:80; max-width:min(680px, 58vw); max-height:80vh; overflow:hidden;
+  background:var(--surface); color:var(--text-2);
+  border:1px solid var(--line-2); border-left:3px solid var(--accent);
+  border-radius:var(--r-sm); box-shadow:var(--sh-3); padding:11px 14px;
+  font-size:13px; line-height:1.68; white-space:pre-line; overflow-wrap:anywhere;
+  opacity:0; visibility:hidden; transition:opacity .13s, visibility .13s;
+  /* **永远不接鼠标事件**。浮层是「看一眼」，不是「一个能点的东西」——
+     唯一的硬要求是它不能把底下的按钮挡住：鼠标一移上去它就收起、按钮就在鼠标底下，
+     那才是真的烦。pointer-events:none 让点击直接穿过去，位置摆在哪都不会挡。
+     代价是它自己不能滚动，所以长文靠缩一档字号去挤（见 .tip.is-long）。 */
+  pointer-events:none;
+}
+.tip.is-long{font-size:12px; line-height:1.6}
+.tip.is-on{opacity:1; visibility:visible}
+
+.skeleton{border-radius:var(--r); background:var(--surface-2); height:120px;
+  animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.55}}
+.boot{padding:120px 0; text-align:center; color:var(--text-3)}
+
+/* ============================ API 对接页 ============================ */
+a.btn{text-decoration:none}
+.m{flex:0 0 auto; font-family:var(--mono); font-size:10.5px; font-weight:700; letter-spacing:.5px;
+  padding:2px 6px; border-radius:var(--r-xs); border:1px solid transparent}
+.m--get{background:var(--info-soft); color:var(--info); border-color:var(--info-line)}
+.m--post{background:var(--ok-soft); color:var(--ok); border-color:var(--ok-line)}
+.ep__row{display:flex; align-items:center; gap:9px; min-width:0; width:100%}
+.ep__path{font-family:var(--mono); font-size:12.5px; font-weight:600; color:var(--text);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.ep__title{flex:1; min-width:0; text-align:right; font-size:12px; font-weight:400; color:var(--text-3);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.ptbl{width:100%; border-collapse:collapse; font-size:12.5px; margin:4px 0 0}
+.ptbl th{font-weight:500; color:var(--text-3); font-size:11.5px; text-align:left;
+  padding:7px 12px 7px 0; border-bottom:1px solid var(--line)}
+.ptbl td{padding:8px 12px 8px 0; border-bottom:1px solid var(--line); vertical-align:top;
+  color:var(--text-2); line-height:1.6}
+.ptbl tr:last-child td{border-bottom:0}
+.ptbl .pn{font-family:var(--mono); font-size:12px; font-weight:600; color:var(--text); white-space:nowrap}
+.ptbl .pt{font-family:var(--mono); font-size:11px; color:var(--text-3); white-space:nowrap}
+.codeblk{position:relative; margin-top:9px}
+.codeblk > pre{margin:0; padding:12px 14px; padding-right:52px; overflow:auto; max-height:360px;
+  background:var(--surface-2); border:1px solid var(--line); border-radius:var(--r-sm);
+  font-family:var(--mono); font-size:11.5px; line-height:1.65; color:var(--text-2);
+  white-space:pre; tab-size:2}
+.codeblk > .copy{position:absolute; top:7px; right:7px}
+.apilabel{display:flex; align-items:center; gap:8px; margin:16px 0 0;
+  font-size:12px; font-weight:600; color:var(--text-2)}
+.apilabel:first-child{margin-top:0}
+.apidesc{margin:0; font-size:12.5px; color:var(--text-2); line-height:1.7}
+.gsec{display:flex; align-items:baseline; gap:10px; flex-wrap:wrap;
+  padding:18px 20px 8px; border-top:1px solid var(--line)}
+.gsec:first-child{border-top:0; padding-top:6px}
+.gsec h3{font-size:13px; font-weight:650}
+.gsec p{margin:0; font-size:12px; color:var(--text-3); min-width:0; flex:1}
+.ep{border-top:1px solid var(--line)}
+.ep > summary{list-style:none; cursor:pointer; padding:13px 20px; display:flex;
+  align-items:center; transition:background .14s}
+.ep > summary::-webkit-details-marker{display:none}
+.ep > summary:hover{background:var(--surface-2)}
+.ep__body{padding:2px 20px 20px}
+.ep[open] > summary .ep__path{color:var(--accent)}
+.audit{display:flex; flex-wrap:wrap; gap:8px}
+.chipbtn{display:inline-flex; align-items:center; gap:5px; color:var(--accent);
+  background:none; border:0; padding:0; cursor:pointer; font:inherit; font-size:12px; font-weight:600}
+.chipbtn:hover{text-decoration:underline}
+@media (max-width:640px){ .ep__title{display:none} }
+
+@media (max-width:900px){
+  :root{--sidebar-w:0px}
+  .shell{grid-template-columns:minmax(0,1fr)}
+  .sidebar{position:sticky; top:0; z-index:50; height:auto; flex-direction:row;
+    align-items:center; gap:10px; padding:10px 14px; border-right:0; border-bottom:1px solid var(--line);
+    overflow-x:auto}
+  .brand{padding:0 8px 0 0} .brand__t{display:none}
+  .nav{flex-direction:row} .nav__sep{display:none}
+  .navitem span{display:none} .navitem{padding:9px}
+  .sidebar__foot{margin-top:0; padding-top:0; flex-direction:row}
+  .envchip__t{display:none}
+  .content{padding:0 18px 60px}
+}
+@media (prefers-reduced-motion:reduce){ *{animation:none !important; transition:none !important} }
+</style>
+</head>
+<body>
+
+<div class="boot" id="boot">正在读取运行环境与音色库…</div>
+
+<div class="shell hidden" id="app">
+  <!-- ============================ 左导航 ============================ -->
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="mark" aria-hidden="true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2.3" stroke-linecap="round"><path d="M4 10v4M8 6v12M12 9v6M16 7v10M20 11v2"/></svg>
+      </span>
+      <div class="brand__t">
+        <h1>Qwen3-TTS</h1>
+        <p id="brand-sub">Studio</p>
+      </div>
+      <button class="iconbtn" id="theme-btn" title="切换深色 / 浅色" aria-label="切换深色浅色">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.8" stroke-linecap="round">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+      </button>
+    </div>
+
+    <nav class="nav" id="nav" aria-label="主导航">
+      <button class="navitem" data-view="clone" aria-current="page">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 19v3M8 22h8M5 10v1a7 7 0 0014 0v-1"/><rect x="9" y="2" width="6" height="11" rx="3"/></svg>
+        <span>语音克隆</span>
+      </button>
+      <button class="navitem" data-view="design" aria-current="false">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/>
+          <path d="M18.5 16.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/></svg>
+        <span>声音设计</span>
+      </button>
+      <button class="navitem" data-view="official" aria-current="false">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3l2.5 1.7 3-.2 1 2.8 2.3 1.9-1.2 2.8.3 3-2.8 1-1.9 2.3-2.9-1-2.9 1L7.6 17l-2.8-1 .3-3L3.9 10 6.2 8.1l1-2.8 3 .2z"/></svg>
+        <span>官方音色</span>
+      </button>
+      <button class="navitem" data-view="script" aria-current="false">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 4.5A1.5 1.5 0 015.5 3H16l4 4v12.5A1.5 1.5 0 0118.5 21h-13A1.5 1.5 0 014 19.5z"/>
+          <path d="M15 3v5h5M8 12h8M8 16h5"/></svg>
+        <span>剧本工坊</span>
+      </button>
+      <div class="nav__sep"></div>
+      <button class="navitem" data-view="library" aria-current="false">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 5.5A1.5 1.5 0 015.5 4H9l1.6 2H19a1.5 1.5 0 011.5 1.5v10A1.5 1.5 0 0119 19H5.5A1.5 1.5 0 014 17.5z"/></svg>
+        <span>音色库</span>
+      </button>
+      <button class="navitem" data-view="history" aria-current="false">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 8v5l3 2"/><circle cx="12" cy="12" r="9"/></svg>
+        <span>合成记录</span>
+      </button>
+      <button class="navitem" data-view="api" aria-current="false">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 7l-4 5 4 5M15 7l4 5-4 5"/></svg>
+        <span>API 对接</span>
+      </button>
+    </nav>
+
+    <div class="sidebar__foot">
+      <button class="envchip" id="env-btn" title="查看运行环境与排错信息">
+        <span class="dot" id="env-dot"></span>
+        <span class="envchip__t">
+          <b id="env-main">读取中…</b>
+          <span id="env-sub">—</span>
+        </span>
+      </button>
+    </div>
+  </aside>
+
+  <div class="main">
+    <main class="content">
+
+      <!-- ==================== 语音克隆 ==================== -->
+      <section class="view" id="view-clone">
+        <header class="pagehead">
+          <div class="pagehead__t">
+            <h1>语音克隆</h1>
+            <p>拿一段几秒的参考音频复刻音色，再用自由文本描述情绪与语气 —— 想怎么说就怎么写，不查词表。</p>
+          </div>
+          <div class="pagehead__act">
+            <button class="btn btn--outline btn--sm" data-goto="library">管理音色库</button>
+          </div>
+        </header>
+
+        <div class="grid">
+          <div class="stack">
+            <div class="card">
+              <div class="card__head">
+                <span class="stepnum">1</span><h2>要合成的文本</h2>
+                <span class="pill sp" id="c-count">0 字</span>
+              </div>
+              <div class="card__body">
+                <textarea class="textarea" id="c-text" rows="6"
+                  placeholder="输入或粘贴要朗读的内容。长文本会按「单段上限」自动切块后拼接…"></textarea>
+                <div class="row-between mt">
+                  <p class="hint">单次上限 <b id="c-max">2000</b> 字；更长的内容请走剧本工坊分段。</p>
+                  <button class="btn btn--ghost btn--sm" id="c-sample">填入示例</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card__head">
+                <span class="stepnum">2</span><h2>音色来源</h2>
+                <span class="pill pill--accent sp" id="c-src-pill">音色库</span>
+              </div>
+              <div class="card__body">
+                <div class="two" style="margin-bottom:14px">
+                  <button class="btn btn--soft btn--block" id="c-tab-lib">用音色库的固化音色</button>
+                  <button class="btn btn--outline btn--block" id="c-tab-up">临时上传一段参考音频</button>
+                </div>
+
+                <div id="c-pane-lib">
+                  <div id="c-pick-host"></div>
+                  <div id="c-lib-detail"></div>
+                </div>
+
+                <div id="c-pane-up" class="hidden">
+                  <input type="file" id="c-file" accept="audio/*" class="hidden">
+                  <button class="drop" id="c-drop">
+                    <span class="drop__ic">
+                      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                           stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 16V4M7 9l5-5 5 5M4 17v2a1 1 0 001 1h14a1 1 0 001-1v-2"/></svg>
+                    </span>
+                    <span class="drop__t" id="c-drop-t">
+                      <b>点这里选择音频，或把文件拖进来</b>
+                      <span>wav / mp3 / m4a / flac / ogg，建议 3–12 秒干净人声</span>
+                    </span>
+                  </button>
+
+                  <div id="c-editor" class="mt"></div>
+
+                  <div class="field mt">
+                    <div class="row-between">
+                      <label for="c-ref-text">参考音频说的字 <span class="lbl-opt">（完整 ICL 模式下必填）</span></label>
+                      <span id="c-asr-slot"></span>
+                    </div>
+                    <textarea class="textarea textarea--slim" id="c-ref-text" rows="2"
+                      placeholder="逐字照抄参考音频里说的话，不要改写"></textarea>
+                    <p class="hint" id="c-ref-hint"></p>
+                  </div>
+
+                  <div class="row-between mt">
+                    <button class="btn btn--outline btn--sm" id="c-save">存进音色库</button>
+                    <span class="hint" id="c-up-note"></span>
+                  </div>
+                </div>
+
+                <!-- 放在两个面板外面：这个开关对「音色库音色」和「临时上传」都生效。
+                     早先它在上传面板里，于是选了库里的音色就整块看不见，
+                     等于「完整 ICL / 仅向量」根本无从切换。 -->
+                <div class="switchrow mt">
+                  <input type="checkbox" id="c-xvec" checked>
+                  <label class="switchrow__t" for="c-xvec" style="cursor:pointer">
+                    <b>只用说话人向量（推荐）</b>
+                    <span>开启后只取音色，不学参考音频的语调，切换语种更干净、也不需要填参考文本。
+                      关掉则走完整 ICL，更贴参考的韵律，但必须把参考文本写准。
+                      选音色库里的音色时，这里会跟着那个音色保存时的设置走，也可以当场改 —— 只影响这一次生成。</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card__head"><span class="stepnum">3</span><h2>情绪与语气指令</h2>
+                <span class="pill sp" id="c-instr-pill">自由文本</span></div>
+              <div class="card__body">
+                <textarea class="textarea" id="c-instruct" rows="3"
+                  placeholder="例如：压低声音，语速偏慢，带一点克制的疲惫感。喘气声别太重。"></textarea>
+                <p class="hint mt">这段文字会原样包成一个对话轮次喂给模型，不是关键词匹配 ——
+                  越具体、越像在给演员说戏，效果越稳。留空即中性朗读。</p>
+                <p class="hint hint--warn mt" id="c-instr-tip" hidden></p>
+              </div>
+            </div>
+
+            <div class="card">
+              <div id="c-adv"></div>
+            </div>
+          </div>
+
+          <aside class="rail" id="c-rail"></aside>
+        </div>
+      </section>
+
+      <!-- ==================== 声音设计 ==================== -->
+      <section class="view hidden" id="view-design">
+        <header class="pagehead">
+          <div class="pagehead__t">
+            <h1>声音设计</h1>
+            <p>不需要任何参考音频，直接用文字描述你想要的说话人：性别、年龄、音色质感、口音与说话方式。</p>
+          </div>
+        </header>
+
+        <div class="grid">
+          <div class="stack">
+            <div class="card">
+              <div class="card__head"><span class="stepnum">1</span><h2>要合成的文本</h2>
+                <span class="pill sp" id="d-count">0 字</span></div>
+              <div class="card__body">
+                <textarea class="textarea" id="d-text" rows="5" placeholder="输入要朗读的内容…"></textarea>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card__head"><span class="stepnum">2</span><h2>音色描述</h2>
+                <span class="pill sp">文字即音色</span></div>
+              <div class="card__body">
+                <textarea class="textarea" id="d-instruct" rows="4"
+                  placeholder="例如：三十五岁上下的男声，嗓音偏低带一点颗粒感，像深夜电台，语速沉稳，句尾略微上扬。"></textarea>
+                <p class="hint mt">描述里可以同时写「音色」和「演法」。只写音色时语气交给模型自己定。</p>
+              </div>
+            </div>
+
+            <div class="card"><div id="d-adv"></div></div>
+          </div>
+          <aside class="rail" id="d-rail"></aside>
+        </div>
+      </section>
+
+      <!-- ==================== 官方音色 ==================== -->
+      <section class="view hidden" id="view-official">
+        <header class="pagehead">
+          <div class="pagehead__t">
+            <h1>官方音色</h1>
+            <p>用权重内置的 9 个说话人，无需参考音频；支持逐句情感与多人对话。</p>
+          </div>
+        </header>
+
+        <div class="grid">
+          <div class="stack">
+            <div class="card">
+              <div class="card__head"><span class="stepnum">1</span><h2>说话人</h2>
+                <span class="pill sp" id="o-spk-pill">—</span></div>
+              <div class="card__body">
+                <div class="spk" id="o-speakers"></div>
+                <div class="hrow__slot" id="o-try"></div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card__head"><span class="stepnum">2</span><h2>文本</h2>
+                <span class="pill sp" id="o-count">0 字</span></div>
+              <div class="card__body">
+                <textarea class="textarea textarea--mono" id="o-text" rows="7"
+                  placeholder="单人直接写内容即可。
+
+要演多人对话，每行写成：
+[vivian][轻快地] 你终于来了。
+[uncle_fu][低沉] 路上耽搁了一会儿。"></textarea>
+                <div class="row-between mt">
+                  <p class="hint">行首 `[说话人]` 后可以再跟一个 `[情感指令]`。
+                    只有整篇每行都是合法说话人时才会按对话逐句合成，否则整体一次生成。</p>
+                  <div class="row-between">
+                    <button class="btn btn--ghost btn--sm" id="o-sample">填入对话示例</button>
+                    <button class="btn btn--outline btn--sm" id="o-preview">结构预览</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card__head"><span class="stepnum">3</span><h2>整体情感指令</h2>
+                <span class="pill sp" id="o-instr-pill">自由文本</span></div>
+              <div class="card__body">
+                <textarea class="textarea" id="o-instruct" rows="3"
+                  placeholder="仅单人朗读时生效；多人对话请在每行行首写各自的 [情感指令]。"></textarea>
+                <div class="notes mt" id="o-note-06"></div>
+              </div>
+            </div>
+
+            <div class="card"><div id="o-adv"></div></div>
+          </div>
+          <aside class="rail" id="o-rail"></aside>
+        </div>
+      </section>
+
+      <!-- ==================== 剧本工坊 ==================== -->
+      <section class="view hidden" id="view-script">
+        <header class="pagehead">
+          <div class="pagehead__t">
+            <h1>剧本工坊</h1>
+            <p>多角色长剧本：每行 <code style="font-family:var(--mono)">[角色] 台词</code>，
+              角色名对应音色库里已固化的音色，逐句合成后按段间静音拼接。</p>
+          </div>
+          <div class="pagehead__act">
+            <button class="btn btn--outline btn--sm" data-goto="library">去音色库补音色</button>
+          </div>
+        </header>
+
+        <div class="grid">
+          <div class="stack">
+            <div class="card">
+              <div class="card__head"><span class="stepnum">1</span><h2>剧本</h2>
+                <span class="pill sp" id="s-count">0 行</span></div>
+              <div class="card__body">
+                <div class="codebox" id="s-box">
+                  <div class="codebox__hl" id="s-hl" aria-hidden="true"></div>
+                  <textarea class="codebox__ta" id="s-text" spellcheck="false"
+                    placeholder="[韩立][压低了声音] 此丹的药力，恐怕不止于此。
+[南宫婉] 你是说……
+[韩立] 服下之后，三日内必有异动。"></textarea>
+                </div>
+                <div class="row-between mt">
+                  <p class="hint">行首必须是音色库里的音色名，可再跟一个 <code style="font-family:var(--mono)">[情感指令]</code>。</p>
+                  <div class="row-between">
+                    <button class="btn btn--ghost btn--sm" id="s-sample">填入示例</button>
+                    <button class="btn btn--outline btn--sm" id="s-tidy">一键整理格式</button>
+                  </div>
+                </div>
+
+                <div class="row-between mt">
+                  <button class="btn btn--soft btn--sm" id="s-pick">插入角色音色</button>
+                  <span class="hint">在弹窗里挑一个，把 <code style="font-family:var(--mono)">[音色名]</code> 插到光标处</span>
+                </div>
+
+                <div class="metrics hidden" id="s-stats"></div>
+                <div id="s-issues"></div>
+              </div>
+            </div>
+
+            <div class="card"><div id="s-adv"></div></div>
+          </div>
+          <aside class="rail" id="s-rail"></aside>
+        </div>
+      </section>
+
+      <!-- ==================== 音色库 ==================== -->
+      <section class="view hidden" id="view-library">
+        <header class="pagehead">
+          <div class="pagehead__t">
+            <h1>音色库</h1>
+            <p>固化音色：一段参考音频 + 参考文本 + 音色基因（.pt）。
+              有了基因，反复使用同一个音色时不必每次重算说话人向量。</p>
+          </div>
+          <div class="pagehead__act">
+            <button class="btn btn--primary btn--sm" id="l-new">新增音色</button>
+          </div>
+        </header>
+
+        <div class="grid">
+          <div class="stack">
+            <div class="card">
+              <div class="card__body">
+                <input class="input" id="l-q" type="search" autocomplete="off"
+                       placeholder="按音色名筛选，打几个字就行（模糊匹配，Esc 清空）">
+                <div class="row-between mt">
+                  <div class="row-between" id="l-filter"></div>
+                  <span class="hint" id="l-summary"></span>
+                </div>
+              </div>
+            </div>
+            <div id="l-grid-host"></div>
+          </div>
+          <aside class="rail" id="l-rail"></aside>
+        </div>
+      </section>
+
+      <!-- ==================== 合成记录 ==================== -->
+      <section class="view hidden" id="view-history">
+        <header class="pagehead">
+          <div class="pagehead__t">
+            <h1>合成记录</h1>
+            <p>只记参数，不存音频副本 —— 音频始终只有 outputs/ 里那一份，避免同一段声音在磁盘上存在两遍。</p>
+          </div>
+          <div class="pagehead__act">
+            <button class="btn btn--outline btn--sm" id="h-refresh">刷新</button>
+            <button class="btn btn--danger btn--sm" id="h-clear">清空记录</button>
+          </div>
+        </header>
+        <div id="h-host"></div>
+      </section>
+
+      <!-- ==================== API 对接 ==================== -->
+      <section class="view hidden" id="view-api">
+        <header class="pagehead">
+          <div class="pagehead__t">
+            <h1>API 对接</h1>
+            <p>同一份后端也能被脚本直接调用：提交任务拿 job id，轮询到 done 再取音频。
+              下面这份清单由服务端生成，并与真实注册的路由逐条对账。</p>
+          </div>
+          <div class="pagehead__act">
+            <button class="btn btn--outline btn--sm" id="a-reload">重新对账</button>
+            <a class="btn btn--outline btn--sm" href="/openapi.json" target="_blank" rel="noopener">openapi.json</a>
+          </div>
+        </header>
+        <div id="a-host"></div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<!-- 环境 / 排错抽屉 -->
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <div class="drawer__head">
+    <h2>运行环境</h2>
+    <button class="iconbtn" id="drawer-close" aria-label="关闭">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="drawer__body">
+    <table class="kv" id="env-table"></table>
+    <div class="notes mt" id="env-notes" style="padding:0"></div>
+    <div class="notes mt" id="env-models" style="padding:0"></div>
+    <p class="hint mt">排错顺序：先看「计算后端 / 显存 / 精度」，再看这里给出的提示。
+      缺权重会在上方直接列出来。</p>
+  </div>
+</aside>
+
+<div class="toasts" id="toasts"></div>
+
+<script>
+(() => {
+"use strict";
+
+/* ============================================================================
+   0. 基础工具
+   ============================================================================ */
+const $  = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const fmtTime = (t) => {
+  if (!isFinite(t) || t < 0) t = 0;
+  const m = Math.floor(t / 60), s = Math.floor(t % 60);
+  return m + ":" + String(s).padStart(2, "0");
+};
+const fmtDur = (d) => (d ? (+d).toFixed(2) + "s" : "—");
+
+const THEME_KEY = "qs-theme";
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  localStorage.setItem(THEME_KEY, t);
+}
+(function initTheme() {
+  const saved = localStorage.getItem(THEME_KEY);
+  const sys = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  applyTheme(saved || sys);
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e) => {
+    if (!localStorage.getItem(THEME_KEY)) applyTheme(e.matches ? "dark" : "light");
+  });
+})();
+$("#theme-btn").addEventListener("click", () => {
+  applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+  // 波形画在 canvas 上，取的是 CSS 变量的字面值，换主题必须重画
+  requestAnimationFrame(() => WAVE_REDRAW.forEach((f) => { try { f(); } catch (_) {} }));
+});
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const ct = r.headers.get("content-type") || "";
+  const data = ct.includes("json") ? await r.json() : await r.text();
+  if (!r.ok || (data && data.ok === false)) {
+    const msg = (data && (data.error || data.detail)) || r.statusText || "请求失败";
+    const err = new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+    // 把后端的结构化信息一并带出来：有些失败得由调用方分情况处理，
+    // 比如「同名音色已存在」要能升级成「是否覆盖」的二次确认，而不是一句 toast 了事。
+    if (data && typeof data === "object") err.data = data;
+    throw err;
+  }
+  return data;
+}
+const post = (path, body) => api(path, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(body || {}),
+});
+
+function toast(msg, level = "info") {
+  const el = document.createElement("div");
+  el.className = "toast toast--" + level;
+  el.textContent = msg;
+  $("#toasts").appendChild(el);
+  setTimeout(() => {
+    el.style.transition = "opacity .3s, transform .3s";
+    el.style.opacity = "0"; el.style.transform = "translateY(6px)";
+    setTimeout(() => el.remove(), 320);
+  }, level === "err" ? 5200 : 2600);
+}
+
+/* ---------------------------------------------------------------------------
+   悬停看全文的浮层
+   合成记录的正文在行里只留两行，想核对原文得有个地方把它弹出来。
+   只建一个节点来回挪位置：给每条记录都挂一个浮层的话，长列表会多出几十个
+   随时待命的 DOM。
+   不用 title 属性：有一秒延迟、长文本换行难看、样式一个都改不了。
+   也不能就地撑开列表 —— 列表一跳，鼠标底下那一行就换了，越想看哪条越看不到。
+--------------------------------------------------------------------------- */
+let _tipEl = null;
+let _tipTimer = 0;
+
+function hideTip() {
+  clearTimeout(_tipTimer);
+  if (_tipEl) _tipEl.classList.remove("is-on");
+}
+
+/* 留一小段宽限再收起：鼠标贴着那一行的边缘微动时会连着吐出 enter/leave，
+   不留宽限就会出现「刚露面就被自己关掉」的闪。浮层本身不接鼠标事件，
+   所以这段宽限不是用来「移到浮层上」的。 */
+function hideTipSoon() {
+  clearTimeout(_tipTimer);
+  _tipTimer = setTimeout(hideTip, 160);
+}
+
+function showTip(text, from) {
+  if (!text) return;
+  if (!_tipEl) {
+    _tipEl = document.createElement("div");
+    _tipEl.className = "tip";
+    document.body.appendChild(_tipEl);
+  }
+  clearTimeout(_tipTimer);
+  _tipEl.textContent = text;
+  // 浮层不接鼠标事件、也不能滚动，长文只能靠缩一档字号挤进一屏。
+  // 阈值按「大概超过二十行」取 —— 短句缩字号反而显得比正文还小。
+  _tipEl.classList.toggle("is-long", text.length > 700);
+  _tipEl.classList.add("is-on");
+  // 先落内容再量尺寸：浮层多高取决于文本折了几行，量早了会算错方向
+  _tipEl.style.left = "0px";
+  _tipEl.style.top = "0px";
+  const r = from.getBoundingClientRect();
+  const w = _tipEl.offsetWidth, h = _tipEl.offsetHeight;
+  // **靠右放**：合成记录的操作按钮（试听 / 复制 / 删除）都在行的左下角，
+  // 浮层从左边铺开正好压住它们 —— 想点按钮反而点不开。
+  // 右对齐到源元素的右边缘，再保底不许越过中线（中线左边一律留给按钮）。
+  const x = Math.min(
+    Math.max(r.left + r.width * 0.5, r.right - w),
+    Math.max(8, innerWidth - w - 8),
+  );
+  let y = r.bottom + 8;
+  if (y + h > innerHeight - 8) y = Math.max(8, r.top - h - 8);   // 下面放不下就翻到上面
+  _tipEl.style.left = x + "px";
+  _tipEl.style.top = y + "px";
+}
+
+/* 任何滚动都让浮层失效：它是 position:fixed，不会跟着那一行一起滚，
+   不撤走就会挂在半空中指着别的东西。capture 是为了把内层滚动容器一起收；
+   浮层自己那一份滚动得放过 —— 正文长到要滚动时才滚得动。 */
+addEventListener("scroll", (e) => { if (e.target !== _tipEl) hideTip(); },
+                 { passive: true, capture: true });
+
+const LEVELS = {
+  ok:    ["成功", "✓", "note--ok"],
+  warn:  ["注意", "!", "note--warn"],
+  error: ["失败", "✕", "note--error"],
+  info:  ["提示", "i", "note--info"],
+};
+function noteHTML(text, level = "info") {
+  if (!text) return "";
+  const [label, icon, cls] = LEVELS[level] || LEVELS.info;
+  const body = String(text).split("\n").filter((l) => l.trim())
+    .map((l) => `<p>${esc(l)}</p>`).join("");
+  const role = level === "error" ? "alert" : "status";
+  return `<div class="note ${cls}" role="${role}">`
+       + `<span class="ic" aria-hidden="true">${icon}</span>`
+       + `<div class="bd"><span class="lb">${label}</span>${body}</div></div>`;
+}
+
+/* ============================================================================
+   1. 全局状态
+   ============================================================================ */
+let BOOT = {};            // /api/bootstrap 的结果
+let VOICES = [];          // 音色库列表（rows）
+let DOCS = null;          // /api/docs 的结果
+const STATE = {           // 各视图的即时状态
+  clone: { src: "lib", voice: "", upload: null, xvec: true },
+  design: { instruct: "" },
+  official: { speaker: "vivian" },
+  script: { roles: [] },
+  library: { picked: new Set(), mode: "all", q: "" },   // mode: all | xvec | icl；q: 按名字模糊筛
+  api: {},
+};
+
+const MODE_LABEL = { clone: "语音克隆", design: "声音设计", official: "官方音色", script: "剧本工坊" };
+
+/* ---------------------------------------------------------------------------
+   输入框草稿
+   为什么要它：这几个框里放的是「你要念的正文」和「你调出来的情绪指令」，
+   写一次不容易，而切页面、刷新、关掉重开都足够频繁 —— 丢了只能重写。
+   存 localStorage，按字段名逐条记。
+   **读回来必须一字不动**（不 trim、不合并空白、不改换行）：用户提过
+   「换行会丢失」，而换行在这些框里是有意义的（语调的气口、剧本的行结构），
+   任何归一化都算 bug。清空输入框 = 草稿也清空。
+   唯一例外见下面「粘贴进来的『换行』不一定是换行」：把**不渲染成换行**的隐形分隔符
+   换成真换行（只会往「更多换行」的方向走，永远不会把换行折掉）。
+--------------------------------------------------------------------------- */
+const DRAFT_KEY = "qs-draft";
+const _draftFields = [];            // 绑定过的选择器；卸载时统一冲刷
+const _draftAll = () => {
+  try { return JSON.parse(localStorage.getItem(DRAFT_KEY) || "{}") || {}; }
+  catch (_) { return {}; }          // 存坏了也不能让页面起不来
+};
+function _draftWrite() {
+  const d = _draftAll();
+  _draftFields.forEach((sel) => { const el = $(sel); if (el) d[sel] = el.value; });
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch (_) {}
+}
+/* 关页 / 刷新前统一存一次。**不能只靠 input 事件** —— 程序赋值 `el.value = x`
+   不会派发 input（示例文本、情绪预设、「整理剧本」都踩这一条），
+   那些改动同样该留住。 */
+addEventListener("beforeunload", _draftWrite);
+
+function bindDraft(sel) {
+  const el = $(sel);
+  if (!el) return null;
+  const all = _draftAll();
+  // 只在框是空的时候回填：别把「程序刚填进去的示例文本」冲掉
+  if (!el.value && typeof all[sel] === "string" && all[sel]) el.value = all[sel];
+  // 修复之前存下的草稿里可能还夹着隐形分隔符，回填时顺手换成真换行
+  const fixed = normalizeBreaks(el.value);
+  if (fixed !== el.value) el.value = fixed;
+  if (!_draftFields.includes(sel)) _draftFields.push(sel);
+  el.addEventListener("input", _draftWrite);
+  return el;                        // 调用方在回填之后再跑自己的字数/预览同步
+}
+
+/* ---------------------------------------------------------------------------
+   粘贴进来的「换行」不一定是换行
+   浏览器只把 CRLF / CR 归一成 \n，其余分隔符**原样塞进 value**；
+   而它们在一个 textarea 里根本不渲染成换行 —— 实测固定宽下
+   U+000B(Word 的软换行) / U+000C / U+0085 / U+2028 / U+2029 都只占一行，
+   肉眼看就是「一整段」。所以「复制进去变成一整段了」不一定是粘贴掉的，
+   很可能是来源用的就是这些字符。
+   委托到 document 上统一收口：所有 textarea 都过这道，以后新加框不用再记得接。
+   干净的文本（\n / CRLF）一律不插手，走浏览器原生粘贴路径，撤销栈不受影响。
+--------------------------------------------------------------------------- */
+const SOFT_BREAKS = /[\u000b\u000c\u0085\u2028\u2029]/g;
+const normalizeBreaks = (s) => String(s).replace(SOFT_BREAKS, "\n");
+
+document.addEventListener("paste", (e) => {
+  const el = e.target;
+  if (!el || el.tagName !== "TEXTAREA") return;      // 单行 input 装不下换行，管也白管
+  const raw = e.clipboardData ? e.clipboardData.getData("text/plain") : "";
+  if (!raw) return;                                  // 图片/文件等交给浏览器
+  const fixed = normalizeBreaks(raw);
+  if (fixed === raw) return;                         // 干净的就别插手，走浏览器原生粘贴
+  // 有隐形分隔符：自己插一遍，换成真换行。execCommand 保留撤销栈。
+  e.preventDefault();
+  document.execCommand("insertText", false, fixed.replace(/\r\n?/g, "\n"));
+});
+
+/* ============================================================================
+   2. 波形：峰值计算与绘制
+   ============================================================================ */
+const WAVE_REDRAW = [];
+let _audioCtx = null;
+const audioCtx = () => (_audioCtx ||= new (window.AudioContext || window.webkitAudioContext)());
+let _rzTimer = 0;
+addEventListener("resize", () => {
+  clearTimeout(_rzTimer);
+  _rzTimer = setTimeout(() => WAVE_REDRAW.forEach((f) => { try { f(); } catch (_) {} }), 160);
+});
+
+/* 同一时刻只播一个音频：不然「试听这条 → 又点另一条」会两条一起响。 */
+let NOW_PLAYING = null;
+function soloMedia(el) {
+  const prev = NOW_PLAYING;
+  NOW_PLAYING = el;
+  if (prev && prev !== el && !prev.paused) prev.pause();
+}
+
+/* 点「试听」就地展开播放器**并立刻出声**：那个按钮的意图就是听一下，
+   展开完还要再按一次播放纯属多一步。（音色库卡片、合成记录行、官方说话人卡共用这两个。）
+   soloMedia 负责把上一条停掉，所以连着点两条不会重叠。 */
+function openPlayer(slot, url, file, opts = {}) {
+  slot.dataset.open = "1";
+  slot.dataset.mode = "";          // 槽位也可能正被裁剪编辑器占着，进来就改回播放器
+  const pl = buildPlayer(slot, opts);
+  slot._stopAudio = () => { try { pl.audio.pause(); } catch (_) {} };
+  pl.setURL(url, file);
+  soloMedia(pl.audio);
+  pl.audio.play().catch(() => {}); // 浏览器拒绝自动播放就不出声，界面照常展开
+}
+
+/* 收起一个槽位（音色库卡片 = 试听播放器或裁剪编辑器；合成记录行 = 试听播放器）。
+   **必须连声音一起停**：宿主节点一删，那个 Audio 元素照样响到结束，
+   而界面上已经没有能按暂停的地方了。以前「试听」只展开不播放，这个洞不显眼；
+   改成点一下就播之后，就必须在收起时补上。谁来装音频，谁留下 slot._stopAudio。 */
+function closeSlot(slot) {
+  try { slot._stopAudio?.(); } catch (_) {}
+  slot._stopAudio = null;
+  slot.innerHTML = "";
+  slot.dataset.open = "0";
+  slot.dataset.mode = "";
+}
+
+const _bufCache = new Map();
+async function decodeAudio(url) {
+  if (_bufCache.has(url)) return _bufCache.get(url);
+  const ab = await (await fetch(url)).arrayBuffer();
+  const buf = await audioCtx().decodeAudioData(ab.slice(0));
+  _bufCache.set(url, buf);
+  return buf;
+}
+
+function computePeaks(buffer, buckets) {
+  const chs = [];
+  for (let c = 0; c < buffer.numberOfChannels; c++) chs.push(buffer.getChannelData(c));
+  const len = buffer.length, step = len / buckets, out = new Array(buckets);
+  for (let i = 0; i < buckets; i++) {
+    const a = Math.floor(i * step), b = Math.min(len, Math.floor((i + 1) * step));
+    let lo = 0, hi = 0;
+    for (let j = a; j < b; j++) {
+      let v = 0;
+      for (let c = 0; c < chs.length; c++) v += chs[c][j];
+      v /= chs.length;
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+    out[i] = [lo, hi];
+  }
+  return out;
+}
+
+function paintWave(canvas, peaks, from, to) {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const w = Math.max(60, canvas.clientWidth), h = Math.max(40, canvas.clientHeight);
+  canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const cs = getComputedStyle(document.documentElement);
+  const mid = h / 2;
+  ctx.fillStyle = cs.getPropertyValue("--line").trim() || "#E8EAF3";
+  ctx.fillRect(0, Math.round(mid), w, 1);
+  ctx.fillStyle = cs.getPropertyValue("--text-3").trim() || "#7B8399";
+  const n = peaks.length, bw = Math.max(1, (w / n) * 0.68), amp = Math.max(4, mid - 3);
+  for (let i = 0; i < n; i++) {
+    const x = (i + 0.5) * (w / n);
+    const y0 = mid - peaks[i][1] * amp, y1 = mid - peaks[i][0] * amp;
+    ctx.fillRect(x - bw / 2, y0, bw, Math.max(1, y1 - y0));
+  }
+}
+
+/* ============================================================================
+   3. 只读波形播放器（结果区 / 记录回显共用）
+   ============================================================================ */
+function buildPlayer(host, opts = {}) {
+  host.innerHTML = `
+    <div class="wpl">
+      <div class="wpl-head">
+        <button class="pbtn" data-role="play" aria-label="播放或暂停">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" data-role="picon">
+            <path d="M8 5v14l11-7z"/></svg>
+        </button>
+        <span class="ptime" data-role="time">0:00 / 0:00</span>
+        <span class="sp"></span>
+        ${opts.download === false ? "" :
+          `<a class="btn btn--outline btn--sm" data-role="dl" download="${esc(opts.file || "output.wav")}">下载</a>`}
+      </div>
+      <div class="ed-wave wpl-wave" data-role="wave" tabindex="0"
+           aria-label="音频波形：点击或拖动跳转播放位置">
+        <canvas data-role="canvas"></canvas>
+        <span class="wpl-rest" data-role="rest"></span>
+        <span class="wpl-prog" data-role="prog"></span>
+        <span class="ed-play on" data-role="head"></span>
+      </div>
+    </div>`;
+
+  const el = {
+    root: host.firstElementChild,
+    play: $('[data-role=play]', host), icon: $('[data-role=picon]', host),
+    time: $('[data-role=time]', host), wave: $('[data-role=wave]', host),
+    canvas: $('[data-role=canvas]', host), dl: $('[data-role=dl]', host),
+    prog: $('[data-role=prog]', host), head: $('[data-role=head]', host),
+    rest: $('[data-role=rest]', host),
+  };
+  const audio = new Audio();
+  audio.preload = "metadata";
+  let buf = null, peaks = null, dur = 0, raf = 0;
+  const ICON_PLAY = '<path d="M8 5v14l11-7z"/>';
+  const ICON_PAUSE = '<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>';
+
+  function setURL(url, file) {
+    el.root.classList.remove("hidden");
+    audio.src = url;
+    buf = null; peaks = null; dur = 0;
+    el.prog.style.width = "0%";
+    el.rest.style.left = "0%";
+    el.head.style.left = "0%";
+    if (el.dl && url) { el.dl.href = url; if (file) el.dl.setAttribute("download", file); }
+    el.wave.classList.add("nodata");
+    decodeAudio(url).then((b) => {
+      buf = b; dur = b.duration;
+      peaks = computePeaks(b, Math.max(40, Math.min(900, Math.round(el.wave.clientWidth / 2.4))));
+      el.wave.classList.remove("nodata");
+      redraw(); paintProgress();
+    }).catch(() => { el.wave.classList.add("nodata"); });
+  }
+
+  /* 宿主节点被换掉（合成记录每「试听/收起」一次就重建一个播放器）就自动摘掉自己。
+     否则这个数组会一直攥着早已丢弃的 canvas，时间一长，每次 resize / 换主题
+     都要把所有历史播放器重绘一遍 —— 是实打实的泄漏。 */
+  function redraw() {
+    if (!el.canvas.isConnected) {
+      const i = WAVE_REDRAW.indexOf(redraw);
+      if (i >= 0) WAVE_REDRAW.splice(i, 1);
+      return;
+    }
+    if (!peaks) return;
+    paintWave(el.canvas, peaks);
+  }
+  WAVE_REDRAW.push(redraw);
+
+  /* 进度：百分比定位，不用像素 —— 这样窗口缩放时不需要重算。 */
+  function paintProgress() {
+    const d = dur || (isFinite(audio.duration) ? audio.duration : 0) || 0;
+    const c = audio.currentTime || 0;
+    el.time.textContent = fmtTime(c) + " / " + fmtTime(d);
+    const p = d ? clamp(c / d, 0, 1) * 100 : 0;
+    el.prog.style.width = p + "%";
+    el.rest.style.left = p + "%";
+    el.head.style.left = `clamp(1px, ${p}%, calc(100% - 1px))`;
+  }
+  const paintTime = paintProgress;
+
+  /* timeupdate 每秒只触发约 4 次，播放头会一跳一跳。用 rAF 补平滑。 */
+  function tick() {
+    paintProgress();
+    if (audio.paused) { raf = 0; return; }
+    raf = requestAnimationFrame(tick);
+  }
+  function startTick() { cancelAnimationFrame(raf); raf = requestAnimationFrame(tick); }
+  function stopTick() { cancelAnimationFrame(raf); raf = 0; paintProgress(); }
+
+  function posFromEvent(e) {
+    const r = el.wave.getBoundingClientRect();
+    const x = clamp((e.touches ? e.touches[0].clientX : e.clientX) - r.left, 0, r.width);
+    return (x / r.width) * (dur || audio.duration || 0);
+  }
+  el.play.addEventListener("click", () => {
+    if (audio.paused) { soloMedia(audio); audio.play().catch(() => {}); }
+    else audio.pause();
+  });
+  audio.addEventListener("play", () => { el.icon.innerHTML = ICON_PAUSE; startTick(); });
+  audio.addEventListener("pause", () => { el.icon.innerHTML = ICON_PLAY; stopTick(); });
+  audio.addEventListener("ended", () => { el.icon.innerHTML = ICON_PLAY; stopTick(); });
+  audio.addEventListener("timeupdate", paintProgress);
+  audio.addEventListener("loadedmetadata", paintProgress);
+  audio.addEventListener("seeked", paintProgress);
+
+  let dragging = false;
+  el.wave.addEventListener("pointerdown", (e) => {
+    if (!dur) return;
+    dragging = true; el.wave.setPointerCapture(e.pointerId);
+    audio.currentTime = posFromEvent(e); paintProgress();
+  });
+  el.wave.addEventListener("pointermove", (e) => {
+    if (dragging && dur) { audio.currentTime = posFromEvent(e); paintProgress(); }
+  });
+  el.wave.addEventListener("pointerup", (e) => {
+    dragging = false;
+    try { el.wave.releasePointerCapture(e.pointerId); } catch (_) {}
+  });
+  el.wave.addEventListener("keydown", (e) => {
+    const step = e.shiftKey ? 5 : 1;
+    if (e.key === "ArrowLeft")  { audio.currentTime = Math.max(0, audio.currentTime - step); paintProgress(); e.preventDefault(); }
+    if (e.key === "ArrowRight") { audio.currentTime = audio.currentTime + step; paintProgress(); e.preventDefault(); }
+    if (e.key === " ") { el.play.click(); e.preventDefault(); }
+  });
+
+  return { setURL, audio, get duration() { return dur; } };
+}
+
+/* ============================================================================
+   4. 波形裁剪编辑器（音色库 / 上传参考音频共用）
+   ============================================================================ */
+function createEditor(host, opts = {}) {
+  const minSecs = BOOT.limits?.ref_min_secs ?? 2.0;
+  const goodMax = BOOT.limits?.ref_good_max_secs ?? 12.0;
+  host.innerHTML = `
+    <div class="editor">
+      <div class="ed-head">
+        <span class="ed-name" data-role="name">参考音频</span>
+        <span class="sp"></span>
+        <span class="ed-len" data-role="len">—</span>
+      </div>
+      <div class="ed-wave" data-role="wave" tabindex="0"
+           aria-label="波形：拖动选择要保留的片段，两端圆点可微调">
+        <canvas data-role="canvas"></canvas>
+        <span class="ed-dim" data-role="dim0"></span>
+        <span class="ed-dim" data-role="dim1"></span>
+        <span class="ed-sel" data-role="sel"></span>
+        <span class="ed-play" data-role="play"></span>
+        <button class="ed-h" data-role="h0" aria-label="选区起点"></button>
+        <button class="ed-h" data-role="h1" aria-label="选区终点"></button>
+      </div>
+      <div class="ed-foot">
+        <button class="pbtn" data-role="toggle" aria-label="试听" style="width:32px;height:32px">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" data-role="picon">
+            <path d="M8 5v14l11-7z"/></svg>
+        </button>
+        <span class="ed-read" data-role="read">—</span>
+        <span class="sp"></span>
+        <button class="btn btn--ghost btn--sm" data-role="all">全选</button>
+        ${opts.saveLabel ? `<button class="btn btn--outline btn--sm" data-role="save">${esc(opts.saveLabel)}</button>` : ""}
+      </div>
+      <p class="ed-note" data-role="note"></p>
+    </div>`;
+
+  const el = {
+    wave: $('[data-role=wave]', host), canvas: $('[data-role=canvas]', host),
+    sel: $('[data-role=sel]', host), dim0: $('[data-role=dim0]', host),
+    dim1: $('[data-role=dim1]', host), play: $('[data-role=play]', host),
+    h0: $('[data-role=h0]', host), h1: $('[data-role=h1]', host),
+    name: $('[data-role=name]', host), len: $('[data-role=len]', host),
+    read: $('[data-role=read]', host), note: $('[data-role=note]', host),
+    toggle: $('[data-role=toggle]', host), icon: $('[data-role=picon]', host),
+  };
+  const audio = new Audio();
+  audio.preload = "metadata";
+  let buf = null, peaks = null, dur = 0, a = 0, b = 0;
+  let drag = null;                      // null | "sel" | "h0" | "h1"
+  let playStart = 0, rafId = 0;
+
+  const ICON_PLAY = '<path d="M8 5v14l11-7z"/>';
+  const ICON_PAUSE = '<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>';
+
+  function layout() {
+    const w = el.wave.clientWidth || 1;
+    const L = dur ? (a / dur) * w : 0, R = dur ? (b / dur) * w : w;
+    el.sel.style.left = L + "px"; el.sel.style.width = Math.max(0, R - L) + "px";
+    el.dim0.style.left = "0px";   el.dim0.style.width = L + "px";
+    el.dim1.style.left = R + "px"; el.dim1.style.width = Math.max(0, w - R) + "px";
+    el.h0.style.left = L + "px";  el.h1.style.left = R + "px";
+  }
+  function readout() {
+    const sel = Math.max(0, b - a);
+    el.read.textContent = `选区 ${sel.toFixed(2)}s（${fmtTime(a)} – ${fmtTime(b)}）／ 全长 ${dur.toFixed(2)}s`;
+    let lv = "ok", t = "这段长度合适。";
+    if (sel < minSecs) { lv = "warn"; t = `选区只有 ${sel.toFixed(2)}s，短于建议下限 ${minSecs}s —— 音色会不稳、容易被参考音频的咬字带走。`; }
+    else if (sel > goodMax) { lv = "warn"; t = `选区 ${sel.toFixed(2)}s 偏长（超过 ${goodMax}s）—— 通常不会更好，反而更容易把参考的语气一起学过去。`; }
+    el.note.textContent = t;
+    el.note.className = "ed-note " + (lv === "ok" ? "ok" : "warn");
+    layout();
+    // 解码完成、拖选区、点「全选」都会走到这里。拖的时候是每帧一次，
+    // 所以调用方自己防抖 —— 这里只负责「有变化就说一声」。
+    opts.onRange?.(a, b, dur);
+  }
+  function stopPlay() {
+    audio.pause(); cancelAnimationFrame(rafId);
+    el.play.classList.remove("on"); el.icon.innerHTML = ICON_PLAY;
+  }
+  /* 同 buildPlayer：宿主被重建就摘掉自己，别把失效的 canvas 一直挂在重绘表里 */
+  function redraw() {
+    if (!el.canvas.isConnected) {
+      const i = WAVE_REDRAW.indexOf(redraw);
+      if (i >= 0) WAVE_REDRAW.splice(i, 1);
+      return;
+    }
+    if (!peaks) return;
+    paintWave(el.canvas, peaks);
+    layout();
+  }
+  WAVE_REDRAW.push(redraw);
+
+  function posFromEvent(e) {
+    const r = el.wave.getBoundingClientRect();
+    const x = clamp((e.clientX ?? 0) - r.left, 0, r.width);
+    return { t: (x / r.width) * dur, x };
+  }
+
+  el.wave.addEventListener("pointerdown", (e) => {
+    if (!dur) return;
+    const { t, x } = posFromEvent(e);
+    const w = el.wave.clientWidth || 1;
+    const near = (v) => Math.abs(((v / dur) * w) - x) < 14;
+    if (near(a)) drag = "h0";
+    else if (near(b)) drag = "h1";
+    else { drag = "sel"; a = t; b = t; }
+    el.wave.setPointerCapture(e.pointerId);
+    readout();
+  });
+  el.wave.addEventListener("pointermove", (e) => {
+    if (!drag || !dur) return;
+    const { t } = posFromEvent(e);
+    if (drag === "h0") a = clamp(t, 0, b);
+    else if (drag === "h1") b = clamp(t, a, dur);
+    else { const m = clamp(t, 0, dur); a = Math.min(a, m); b = Math.max(b, m); }
+    readout();
+  });
+  el.wave.addEventListener("pointerup", (e) => {
+    drag = null;
+    try { el.wave.releasePointerCapture(e.pointerId); } catch (_) {}
+  });
+  el.h0.addEventListener("pointerdown", (e) => { drag = "h0"; el.h0.setPointerCapture(e.pointerId); e.stopPropagation(); });
+  el.h1.addEventListener("pointerdown", (e) => { drag = "h1"; el.h1.setPointerCapture(e.pointerId); e.stopPropagation(); });
+  el.h0.addEventListener("pointermove", (e) => {
+    if (drag !== "h0") return;
+    a = clamp(posFromEvent(e).t, 0, b); readout();
+  });
+  el.h1.addEventListener("pointermove", (e) => {
+    if (drag !== "h1") return;
+    b = clamp(posFromEvent(e).t, a, dur); readout();
+  });
+  el.h0.addEventListener("pointerup", () => { drag = null; });
+  el.h1.addEventListener("pointerup", () => { drag = null; });
+
+  el.toggle.addEventListener("click", () => {
+    if (!dur) return;
+    if (!audio.paused) { stopPlay(); return; }
+    playStart = a;
+    audio.currentTime = a;
+    soloMedia(audio);
+    audio.play().catch(() => {});
+    el.icon.innerHTML = ICON_PAUSE;
+    const tick = () => {
+      const w = el.wave.clientWidth || 1;
+      el.play.classList.add("on");
+      el.play.style.left = ((audio.currentTime / dur) * w) + "px";
+      if (audio.currentTime >= b) { stopPlay(); return; }
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+  });
+  audio.addEventListener("ended", stopPlay);
+  audio.addEventListener("pause", () => { el.icon.innerHTML = ICON_PLAY; el.play.classList.remove("on"); cancelAnimationFrame(rafId); });
+  $('[data-role=all]', host)?.addEventListener("click", () => { a = 0; b = dur; readout(); });
+  $('[data-role=save]', host)?.addEventListener("click", () => {
+    opts.onSave?.({ start: a, end: b, duration: dur, buffer: buf, url: audio.src });
+  });
+
+  function load(url, title) {
+    el.name.textContent = title || "参考音频";
+    el.wave.classList.remove("nodata");
+    audio.src = url;
+    peaks = null; dur = 0;
+    decodeAudio(url).then((bf) => {
+      buf = bf; dur = bf.duration; a = 0; b = dur;
+      peaks = computePeaks(bf, Math.max(40, Math.min(900, Math.round(el.wave.clientWidth / 2.4))));
+      el.len.textContent = dur.toFixed(2) + "s";
+      redraw(); readout(); paintWave(el.canvas, peaks); layout();
+    }).catch(() => {
+      el.len.textContent = "读取失败"; el.wave.classList.add("nodata");
+    });
+    el.len.textContent = "解码中…";
+  }
+
+  return { load, stopPlay, get selection() { return { start: a, end: b, duration: dur }; } };
+}
+
+/* ============================================================================
+   5. 生成参数：抽取与呈现
+   结果卡与合成记录**共用同一份抽取逻辑**，两处口径才不会分叉。
+   ============================================================================ */
+const WIDE_KEYS = new Set(["音色", "音色描述", "情感指令", "说话人", "模式"]);
+
+function speakerLabel(key) {
+  const s = (BOOT.speakers || []).find((x) => x.key === (key || "").toLowerCase());
+  return s ? s.label : (key || "");
+}
+function sizeLabel(v) {
+  return !v || v === "auto" ? "自动" : v;
+}
+
+function paramPairs(p) {
+  const out = [];
+  const put = (k, v) => { if (v !== undefined && v !== null && v !== "") out.push([k, v]); };
+  put("模式", MODE_LABEL[p.mode] || p.mode);
+  if (p.mode === "clone") put("音色", p.voice || (p.ref_audio || p.ref_upload ? "临时上传的参考音频" : ""));
+  if (p.mode === "official") put("说话人", speakerLabel(p.speaker));
+  put("模型规格", sizeLabel(p.size));
+  put("语种", p.language && p.language !== "Auto" ? p.language : "Auto（自动识别）");
+  if (p.mode === "design") put("音色描述", p.instruct);
+  else if (p.instruct) put("情感指令", p.instruct);
+  if (p.mode === "clone" && p.xvec_only != null)
+    put("克隆方式", p.xvec_only ? "仅说话人向量" : "完整 ICL（含参考韵律）");
+  if (p.mode === "script") put("段间静音", (p.gap_secs ?? BOOT.defaults?.gap_secs ?? 0.4) + " s");
+  return out;
+}
+
+function paramsHTML(p) {
+  const pairs = paramPairs(p || {});
+  if (!pairs.length) return "";
+  return `<div class="pmeta__t">本次参数</div><div class="pmeta">`
+    + pairs.map(([k, v]) => `<div class="pmeta__c${WIDE_KEYS.has(k) ? " is-wide" : ""}">`
+      + `<i>${esc(k)}</i><b>${esc(v)}</b></div>`).join("") + `</div>`;
+}
+
+/* ============================================================================
+   6. 结果卡
+   ============================================================================ */
+const ORB = `<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="1.7" stroke-linecap="round"><path d="M12 2v20M7 7v10M17 7v10M3 11v2M21 11v2"/></svg>`;
+
+function createResult(host) {
+  host.innerHTML = `
+    <div class="card card--lift">
+      <div class="card__head">
+        <h2>生成结果</h2>
+        <span class="pill sp" data-role="badge">待生成</span>
+      </div>
+      <div class="result__idle" data-role="idle">
+        <span class="orb">${ORB}</span>
+        <p>填好左侧内容后点「生成语音」。<br>
+           首次生成要加载权重会慢一些，之后同规格会复用，明显更快。</p>
+      </div>
+      <div class="hidden" data-role="playerbox" style="padding:16px 20px 0"></div>
+      <div class="hidden metrics" data-role="metrics" style="padding:0 20px"></div>
+      <div class="hidden params" data-role="params"></div>
+      <div class="hidden result__acts" data-role="acts"></div>
+      <div class="hidden run" data-role="run">
+        <div class="bar" data-role="bar"><i></i></div>
+        <p class="run__msg" data-role="msg"></p>
+      </div>
+      <div class="notes" data-role="alerts"></div>
+    </div>`;
+  const R = {
+    root: host.firstElementChild,
+    badge: $('[data-role=badge]', host), idle: $('[data-role=idle]', host),
+    playerbox: $('[data-role=playerbox]', host), metrics: $('[data-role=metrics]', host),
+    params: $('[data-role=params]', host), acts: $('[data-role=acts]', host),
+    run: $('[data-role=run]', host),
+    bar: $('[data-role=bar]', host), barfill: $('[data-role=bar] i', host),
+    msg: $('[data-role=msg]', host), alerts: $('[data-role=alerts]', host),
+  };
+  R.player = buildPlayer(R.playerbox);
+  return R;
+}
+
+function paintResult(R, d) {
+  R.run.classList.add("hidden");
+  R.bar.classList.remove("indet");
+  R.idle.classList.add("hidden");
+  const lvl = d.level || "ok";
+  R.badge.dataset.state = lvl === "ok" ? "done" : (lvl === "warn" ? "warn" : "error");
+  R.badge.textContent = lvl === "ok" ? "已完成" : (lvl === "warn" ? "完成（有提示）" : "失败");
+
+  if (d.url) {
+    R.playerbox.classList.remove("hidden");
+    R.player.setURL(d.url, d.file);
+  } else {
+    R.playerbox.classList.add("hidden");
+  }
+
+  const m = [];
+  if (d.duration) m.push(["音频时长", d.duration + " s"]);
+  if (d.file) m.push(["文件", d.file]);
+  R.metrics.innerHTML = m.map(([k, v]) => `<span class="metric">${esc(k)}<b>${esc(v)}</b></span>`).join("");
+  R.metrics.classList.toggle("hidden", !m.length);
+
+  const ph = paramsHTML(d.params);
+  R.params.innerHTML = ph;
+  R.params.classList.toggle("hidden", !ph);
+  R.params.classList.toggle("is-first", !d.url);
+
+  // 声音设计生成出来的嗓子是**复现不了**的：同一段描述再跑一次，出来的是另一把
+  // 相近但不相同的嗓子（上游没有固定 seed）。所以这里必须给一个存下来的出口，
+  // 否则刷新一下，刚才那个满意的音色就永远找不回来了。
+  // 其余模式不给：克隆页自己就有「存进音色库」，官方音色本来就是内置的，
+  // 剧本工坊一次生成好几个角色、存成一个音色反而说不清是谁。
+  const p = d.params || {};
+  const canSave = !!d.url && p.mode === "design" && !!d.file;
+  R.acts.classList.toggle("hidden", !canSave);
+  R.acts.innerHTML = canSave
+    ? `<button class="btn btn--outline btn--sm" data-role="savevoice">存进音色库</button>
+       <span class="hint">把这段结果当参考音频存下来，之后能在「语音克隆」里用它念别的内容。</span>`
+    : "";
+  if (canSave) {
+    $('[data-role=savevoice]', R.acts).addEventListener("click", () => saveDesignAsVoice(d));
+  }
+
+  // 状态行第一行是「时长/耗时/RTF」，第二行起是补充说明，拆开更好读
+  const lines = String(d.message || "").split("\n").filter((x) => x.trim());
+  R.alerts.innerHTML = lines.length
+    ? lines.map((l, i) => noteHTML(l, i === 0 ? lvl : "info")).join("")
+    : "";
+}
+
+/* ============================================================================
+   7. 任务执行：提交 → 轮询 → 画结果
+   ============================================================================ */
+let HISTORY_DIRTY = false;
+
+async function runJob(payload, R) {
+  if (R) {
+    R.run.classList.remove("hidden");
+    R.bar.classList.add("indet");
+    R.barfill.style.width = "0";
+    R.msg.textContent = "正在提交任务…";
+    R.alerts.innerHTML = "";
+  }
+  const t0 = Date.now();
+  try {
+    const { job } = await post("/api/jobs", payload);
+    let st = null;
+    for (;;) {
+      st = await api("/api/jobs/" + job);
+      if (R) {
+        const el = (Date.now() - t0) / 1000;
+        // 生成是「一次不可分割的模型调用」，后端只能报出 0.1 / 0.92 / 1.0 三个点。
+        // 因此中间那段长等待**如实**用不确定进度条 + 计时器呈现，
+        // 而不是把 10% 摆在那里假装在走 —— 后者会让人以为卡死了。
+        const determinate = (st.progress || 0) >= 0.9;
+        R.bar.classList.toggle("indet", !determinate);
+        if (determinate) R.barfill.style.width = Math.round(st.progress * 100) + "%";
+        R.msg.textContent = `${st.message || "生成中…"}（已等待 ${el.toFixed(0)} 秒）`;
+      }
+      if (st.state === "done" || st.state === "error") break;
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    HISTORY_DIRTY = true;
+    if (st.state === "error") {
+      if (R) paintResult(R, { level: "error", message: st.message, params: payload });
+      else toast(st.message, "err");
+      return { ok: false, message: st.message };
+    }
+    const res = st.result || {};
+    if (R) paintResult(R, {
+      url: res.url, file: res.file, duration: res.duration, level: res.level,
+      message: st.message, params: payload,
+    });
+    toast("生成完成", "ok");
+    return { ok: true, res, message: st.message };
+  } catch (e) {
+    HISTORY_DIRTY = true;
+    if (R) paintResult(R, { level: "error", message: e.message, params: payload });
+    else toast(e.message, "err");
+    return { ok: false, message: e.message };
+  }
+}
+
+/* ============================================================================
+   8. 四个生成页共用的「右侧栏 + 高级区」
+   ============================================================================ */
+function renderRail(prefix, { sizes = null, goLabel = "生成语音", tip = "" } = {}) {
+  const langOpts = (BOOT.languages || ["Auto"]).map((l) =>
+    `<option value="${esc(l)}">${esc(l === "Auto" ? "Auto（自动识别）" : l)}</option>`).join("");
+  const sizeList = sizes || BOOT.sizes || ["1.7B", "0.6B"];
+  const sizeOpts = [`<option value="auto">自动（按显存挑，当前建议 ${esc(BOOT.hardware?.default_size || "1.7B")}）</option>`]
+    .concat(sizeList.map((s) => `<option value="${esc(s)}">${esc(s)}</option>`)).join("");
+
+  // 结果卡在最上、参数卡在最下：生成完那一屏就是结果，不用往下翻；
+  // 语种/规格属于「开跑前的设置」，看过一次就不用再盯，沉到底下不抢视线。
+  $(`#${prefix}-rail`).innerHTML = `
+    <div id="${prefix}-result"></div>
+
+    <div class="railact">
+      <button class="btn btn--primary btn--lg btn--block" id="${prefix}-go">${esc(goLabel)}</button>
+      ${tip ? `<p class="hint hint--center">${esc(tip)}</p>` : ""}
+    </div>
+
+    <div class="card">
+      <div class="card__head"><h2>生成参数</h2></div>
+      <div class="card__body">
+        <div class="field">
+          <label for="${prefix}-lang">语种</label>
+          <select class="select-native" id="${prefix}-lang">${langOpts}</select>
+        </div>
+        <div class="field">
+          <label for="${prefix}-size">模型规格</label>
+          <select class="select-native" id="${prefix}-size">${sizeOpts}</select>
+          <p class="hint" id="${prefix}-size-hint"></p>
+        </div>
+      </div>
+    </div>`;
+
+  const sizeHint = $(`#${prefix}-size-hint`);
+  const syncHint = () => {
+    const v = $(`#${prefix}-size`).value;
+    const eff = v === "auto" ? (BOOT.hardware?.default_size || "1.7B") : v;
+    sizeHint.textContent = eff === "0.6B"
+      ? "0.6B 省显存、更快；官方精品不支持情感指令（内核限制）。"
+      : "1.7B 音质与控制力更好，是本工具默认。";
+  };
+  $(`#${prefix}-size`).addEventListener("change", syncHint);
+  syncHint();
+
+  const R = createResult($(`#${prefix}-result`));
+  return {
+    R,
+    lang: () => $(`#${prefix}-lang`).value,
+    size: () => $(`#${prefix}-size`).value || "auto",
+    go: (fn) => {
+      const btn = $(`#${prefix}-go`);
+      btn.addEventListener("click", fn);
+      return btn;
+    },
+  };
+}
+
+function renderAdv(prefix, notes = []) {
+  $(`#${prefix}-adv`).innerHTML = `
+    <details class="acc" open>
+      <summary>分段与上限<span class="acc__note">长文本怎么被切开</span></summary>
+      <div class="acc__body">
+        <table class="kv">
+          <tr><th>单次文本上限</th><td>${esc(String(BOOT.limits?.max_text_chars ?? 2000))} 字（超出会被拒，请改用剧本工坊）</td></tr>
+          <tr><th>本机单段切分</th><td>${esc(String(BOOT.hardware?.rows?.find?.((r) => r.k === "剧本单段上限")?.v || "—"))}</td></tr>
+          <tr><th>段间静音</th><td>${esc(String(BOOT.defaults?.gap_secs ?? 0.4))} s</td></tr>
+        </table>
+        ${notes.map((n) => noteHTML(n, "info")).join("")}
+      </div>
+    </details>
+    <details class="acc">
+      <summary>模型管理<span class="acc__note" id="${prefix}-mg-status">—</span></summary>
+      <div class="acc__body">
+        <p class="hint">本工具同一时刻只让一套权重驻留显存 —— 换规格时会自动卸载上一套，避免两套同时占用把显存挤爆。</p>
+        <div class="row-between mt">
+          <button class="btn btn--outline btn--sm" data-role="reload">重新加载当前规格</button>
+          <button class="btn btn--ghost btn--sm" data-role="unload">卸载模型</button>
+        </div>
+        <div class="notes mt" data-role="mg-note" style="padding:0"></div>
+      </div>
+    </details>`;
+
+  const adv = $(`#${prefix}-adv`);
+  const note = $('[data-role=mg-note]', adv);
+  const status = $(`#${prefix}-mg-status`);
+  const showStatus = () => {
+    const s = BOOT.model_status || {};
+    status.textContent = s.loaded ? `${s.loaded.kind} / ${s.loaded.size}` : "当前未加载";
+  };
+  showStatus();
+  $('[data-role=unload]', adv).addEventListener("click", async () => {
+    try {
+      const r = await post("/api/model/unload");
+      BOOT.model_status = r.status || {};
+      showStatus();
+      note.innerHTML = noteHTML("已卸载，显存已释放。下次生成会重新加载。", "ok");
+    } catch (e) { note.innerHTML = noteHTML(e.message, "error"); }
+  });
+  $('[data-role=reload]', adv).addEventListener("click", async () => {
+    const kind = PREFIX_KIND[prefix];
+    try {
+      note.innerHTML = noteHTML("正在加载…首次可能要十几秒。", "info");
+      const r = await post("/api/model/load", { kind, size: railOf(prefix).size() });
+      BOOT.model_status = r.status || {};
+      showStatus();
+      const ld = r.status?.loaded;
+      note.innerHTML = noteHTML(ld ? `加载完成：${ld.kind} / ${ld.size}` : "已加载。", "ok");
+    } catch (e) { note.innerHTML = noteHTML(e.message, "error"); }
+  });
+}
+
+const PREFIX_KIND = { c: "clone", d: "design", o: "official", s: "clone" };
+const RAILS = {};
+const railOf = (p) => RAILS[p];
+
+/* ============================================================================
+   9. 弹窗
+   ============================================================================ */
+
+/* ---------------------------------------------------------------------------
+   音色选择弹窗
+   音色库会一直长。把整个库罗列在页面上，十几个还看得过来，三十个就是一堵墙，
+   而且每多存一个音色，所有用到音色的页面都得跟着长一截。
+   所以「选一个音色」统一收成「一个按钮 → 弹窗」：搜索框、克隆方式筛选、
+   列表全在弹窗里，弹窗自己高度封顶 —— 页面再也不会被音色数量撑变形。
+
+   返回选中的音色名；取消（✕ / Esc / 点遮罩 / 点取消）返回 null。
+--------------------------------------------------------------------------- */
+function pickVoice({ title = "选择音色", hint = "", current = "" } = {}) {
+  return new Promise((resolve) => {
+    if (!VOICES.length) {
+      toast("音色库还是空的，先去「音色库」存一个", "warn");
+      resolve(null);
+      return;
+    }
+    let mode = "all", q = "";
+    const m = openModal({
+      title,
+      body: `${hint ? `<p class="apidesc">${esc(hint)}</p>` : ""}
+        <div class="row-fill">
+          <input class="input" id="__pq" type="search" autocomplete="off"
+                 placeholder="按音色名筛选，打几个字就行（模糊匹配）">
+          <span class="hint vpick__count" id="__pn"></span>
+        </div>
+        <div class="row-between mt" id="__pm"></div>
+        <div class="vpick" id="__pl"></div>`,
+      foot: `<button class="btn btn--ghost" data-role="no">取消</button>`,
+    });
+    // 关闭只有一个出口：✕ / Esc / 点遮罩 / 点取消 最后都走到 dialog 的 close 事件，
+    // 于是「取消要 resolve(null)」只用写一遍。选中的那条路先 resolve 了名字，
+    // 后到的 null 不会再改结果（Promise 只认第一次 settle）。
+    m.d.addEventListener("close", () => resolve(null));
+    m.$('[data-role=no]').addEventListener("click", () => m.close());
+
+    const rowsNow = () => {
+      let out = VOICES;
+      if (mode === "xvec") out = out.filter((v) => v.xvec_only);
+      else if (mode === "icl") out = out.filter((v) => !v.xvec_only);
+      if (q.trim()) out = out.filter((v) => fuzzyHit(v.name, q));
+      return out;
+    };
+
+    const paintModes = () => {
+      const n = (f) => VOICES.filter(f).length;
+      m.$("#__pm").innerHTML = [
+        ["all", `全部 ${VOICES.length}`],
+        ["xvec", `仅向量 ${n((v) => v.xvec_only)}`],
+        ["icl", `完整 ICL ${n((v) => !v.xvec_only)}`],
+      ].map(([k, label]) =>
+        `<button type="button" class="btn btn--sm ${mode === k ? "btn--soft" : "btn--ghost"}"
+                 data-mode="${k}">${label}</button>`).join("");
+      m.$$("[data-mode]").forEach((b) => b.addEventListener("click", () => {
+        mode = b.dataset.mode;
+        paintModes();
+        paint();
+      }));
+    };
+
+    // 每一行都带时长和克隆方式：选音色时真正要判断的就是这两件事，
+    // 只看名字挑，挑完才发现是个「必填参考文本的完整 ICL」就晚了。
+    const paint = () => {
+      const rows = rowsNow();
+      m.$("#__pn").textContent = rows.length === VOICES.length
+        ? `共 ${VOICES.length} 个`
+        : `筛出 ${rows.length} / 共 ${VOICES.length} 个`;
+      m.$("#__pl").innerHTML = rows.length
+        ? rows.map((v) => `<button type="button" class="vrow${v.name === current ? " is-on" : ""}"
+              data-name="${esc(v.name)}">
+            <span class="vrow__n">${esc(v.name)}</span>
+            <span class="vrow__m">${fmtDur(v.duration)} · ${esc(modeText(v))}`
+            + `${v.has_prompt ? " · 已有基因" : " · 未生成基因"}</span>
+            ${v.name === current ? `<span class="vrow__ck">当前</span>` : ""}
+          </button>`).join("")
+        : `<p class="vpick__empty">没有名字匹配「${esc(q)}」的音色<br>换个词，或者换个筛选档</p>`;
+    };
+
+    m.$("#__pl").addEventListener("click", (e) => {
+      const b = e.target.closest(".vrow");
+      if (!b) return;
+      m.close();
+      resolve(b.dataset.name);
+    });
+    m.$("#__pq").addEventListener("input", () => { q = m.$("#__pq").value; paint(); });
+    // 回车就选最靠上的那个 —— 打完几个字直接敲回车比再挪手去点更快，
+    // 列表本来就按当前筛选排好了，第一条就是最匹配的。
+    m.$("#__pq").addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      m.$(".vrow")?.click();
+    });
+
+    paintModes();
+    paint();
+    setTimeout(() => m.$("#__pq").focus(), 60);
+  });
+}
+
+function openModal({ title, body, foot }) {
+  const d = document.createElement("dialog");
+  d.className = "modal";
+  d.innerHTML = `<div class="modal__box">
+      <div class="modal__head"><h2>${esc(title)}</h2>
+        <button class="iconbtn" data-role="x" aria-label="关闭">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button></div>
+      <div class="modal__body">${body}</div>
+      ${foot ? `<div class="modal__foot">${foot}</div>` : ""}
+    </div>`;
+  document.body.appendChild(d);
+  const close = () => { try { d.close(); } catch (_) {} d.remove(); };
+  $('[data-role=x]', d).addEventListener("click", close);
+  // 显式处理 Esc：焦点落在输入框里时浏览器会把它吃掉，弹窗就关不掉了
+  d.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.preventDefault(); close(); } });
+  d.addEventListener("click", (e) => { if (e.target === d) close(); });
+  d.showModal();
+  return { d, close, $: (s) => $(s, d), $$: (s) => $$(s, d) };
+}
+
+/* ============================================================================
+   10.5 自动转写（三处「参考文本」输入共用）
+   ============================================================================
+   后端的 /api/transcribe 一直都在，但前端从来没调过 —— 所以哪怕识别能力可用，
+   界面上也没有任何入口。这里把它接出来。
+
+   定位说明：它只负责**少打字**，不负责替你保证正确。SenseVoice 会有同音字错误
+   （实测「大晋元婴」→「大靖元因」、「掩藏」→「隐藏」），而完整 ICL 模式下
+   参考文本写错会直接污染输出，所以转写完一律提示用户核对。
+   ============================================================================ */
+function makeTranscribeBtn(onClick) {
+  const ok = !!(BOOT.asr && BOOT.asr.available);
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "btn btn--outline btn--sm";
+  b.textContent = ok ? "自动转写" : "自动转写不可用";
+  b.disabled = !ok;
+  b.title = ok ? "把这段参考音频转成文本，省去手工打字"
+               : (BOOT.asr?.reason || "自动转写不可用");
+  if (ok) b.addEventListener("click", () => onClick(b));
+  return b;
+}
+
+async function doTranscribe(btn, payload, target, note, opts = {}) {
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "转写中…";
+  if (note) note.innerHTML = noteHTML("正在转写…首次会加载识别模型（约 0.24 GB，纯 CPU），几秒内完成。", "info");
+  try {
+    const r = await post("/api/transcribe", payload);
+    const text = (r.text || "").trim();
+    // keepIfEmpty 是给「自动转写」用的：识别不出东西是常事，不能拿空串把原文抹掉
+    if (text || !opts.keepIfEmpty) target.value = text;
+    if (note) {
+      note.innerHTML = text
+        ? noteHTML("转写完成 —— 请核对一遍再用。识别会有同音字和标点出入"
+            + "（实测「大晋元婴」会被写成「大靖元因」、逗号会丢），"
+            + "而完整 ICL 模式下参考文本写错会直接污染输出。", "warn")
+        : noteHTML("没识别到文本。换一段更清晰、更长的音频再试。", "warn");
+    }
+    return text;
+  } catch (e) {
+    if (note) note.innerHTML = noteHTML(e.message, "error");
+    else toast(e.message, "err");
+    return "";
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
+/* 把按钮塞进某个 [data-role=asr-slot] 容器；容器不存在就静默跳过 */
+function mountTranscribe(host, onClick) {
+  const slot = $(host);
+  if (!slot) return null;
+  const b = makeTranscribeBtn(onClick);
+  slot.appendChild(b);
+  return b;
+}
+
+/* ---------------------------------------------------------------------------
+   自动转写：音频一就绪（选区一改）就自己填，不用点按钮
+   两条纪律，缺一条都会咬人：
+   ① **只覆盖「上一次是我们填进去的」内容。** 用户自己写/改过的一个字都不动 ——
+      参考文本是逐字照抄的活儿，把人手写的覆盖掉等于毁掉一段对齐好的素材。
+   ② **防抖 + 串行。** 拖选区时 onRange 每帧都响，而一次识别要几秒；
+      正在跑就记一个「还要再跑一次」，跑完补上 —— 这样永远只有最后一次选区的
+      结果能落地，不会两个请求回来互相覆盖。
+   复用 doTranscribe 是为了让按钮上照样显示「转写中…」，反馈和白捡的一样。
+--------------------------------------------------------------------------- */
+function autoTranscribe(btn, target, build, delay = 900) {
+  if (!btn || !target) return { poke() {} };
+  let mark = "";                       // 上一次自动写进去的内容
+  let timer = 0, busy = false, pending = false;
+  const touched = () => { const v = target.value.trim(); return !!v && v !== mark; };
+
+  async function fire() {
+    if (!(BOOT.asr && BOOT.asr.available)) return;        // 不可用就别空转，按钮上已写明原因
+    if (!target.isConnected) return;                      // 弹窗已经关了，别白跑一次识别
+    if (busy || btn.disabled) { pending = true; return; } // 手动那次正在跑，等它跑完再补
+    if (touched()) return;                                // 用户手写过，绝不覆盖
+    busy = true;
+    try {
+      await doTranscribe(btn, build(), target, null, { keepIfEmpty: true });
+      mark = target.value.trim();
+    } finally { busy = false; }
+    if (pending) { pending = false; fire(); }
+  }
+  return { poke: (d = delay) => { clearTimeout(timer); timer = setTimeout(fire, d); } };
+}
+
+/* ============================================================================
+   10.6 保存音色后的基因跟进
+   ============================================================================
+   保存音色时后端会顺手排一个「生成音色基因」的后台任务（见 POST /api/voices），
+   这里只负责把它的进度说出来。要点：
+
+   * **音色本身已经存好了** —— 基因任务失败只提示、不回滚，也不该让用户以为
+     保存失败了。所以失败文案里明写「音色已保存」。
+   * 能拿到 note 容器就写进容器，拿不到就退化成一条 toast。
+   ============================================================================ */
+async function followGeneJob(job, note) {
+  if (!job) return;
+  // toast 用的是 "err"，noteHTML 用的是 "error"，这里统一一下
+  const say = (text, kind) => {
+    if (note) note.innerHTML = noteHTML(text, kind === "err" ? "error" : kind);
+    else toast(text, kind === "error" ? "err" : kind);
+  };
+  say("音色已保存，正在后台生成音色基因…", "info");
+  for (;;) {
+    let st;
+    try {
+      st = await api("/api/jobs/" + encodeURIComponent(job));
+    } catch (e) {
+      say("音色已保存；基因任务查询失败：" + e.message, "warn");
+      return;
+    }
+    if (st.state === "done") {
+      say("音色基因已生成 —— 之后用这个音色会直接命中缓存。", "ok");
+      await refreshVoices();
+      return;
+    }
+    if (st.state === "error") {
+      say("音色已保存，但基因生成失败：" + (st.message || "未知原因")
+        + "。不影响使用，可在音色库点「生成音色基因」重试。", "warn");
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 600));
+  }
+}
+
+/* ============================================================================
+   10.7 音色的克隆方式（xvec_only）
+   ============================================================================
+   音色在保存时记下了「克隆方式」，但早先整个界面从来没把它显示出来过 ——
+   数据一直在 /api/voices 的 xvec_only 字段里，只是没人读。
+   于是用户既看不出某个音色存的是哪种，也无从知道下面这个坑：
+   克隆页生成时传的 xvec_only 来自复选框，会把音色自己的设置**悄悄覆盖掉**。
+   这里补上显示，并在选中音色时把复选框同步过去（见 syncXvecToVoice）。
+   ============================================================================ */
+function modePillHTML(v) {
+  // 只有「参考文本必须逐字写准」的完整 ICL 才用警示色。
+  // 默认的仅向量是中性标签，不该也跳出来抢注意力。
+  return v.xvec_only
+    ? `<span class="pill" title="只用说话人向量：只取音色、不学参考音频的语调；不需要参考文本，切换语种更干净">仅向量</span>`
+    : `<span class="pill pill--warn" title="完整 ICL：连参考音频的韵律一起学；参考文本必须逐字写准，写错会污染输出">完整 ICL</span>`;
+}
+
+function modeText(v) {
+  return v.xvec_only ? "仅说话人向量" : "完整 ICL";
+}
+
+/* ============================================================================
+   10. 视图：语音克隆
+   ============================================================================ */
+function syncVoiceCache() {
+  VOICES = (BOOT.voices || []).slice();
+  // 概要行**不在这儿写**：它得跟着筛选走（筛完还写着「共 12 个」会让人以为没生效），
+  // 所以统一由 renderLibrarySummary 出，这里只负责把缓存换掉。
+}
+
+/* 选音色 = 一个按钮 + 一个弹窗（见 pickVoice）。
+   当前选中的那个显示在按钮上，库里有什么、怎么筛，都在弹窗里解决。 */
+function renderCloneVoice() {
+  const host = $("#c-pick-host");
+  if (!VOICES.length) {
+    host.innerHTML = `<div class="empty" style="padding:26px 8px">
+      <b>音色库是空的</b>先在「音色库」里存一个音色，或切到上面临时上传一段参考音频。</div>`;
+    $("#c-lib-detail").innerHTML = "";
+    return;
+  }
+  const v = VOICES.find((x) => x.name === STATE.clone.voice);
+  // 音色可能已经被删掉了。留着那个名字的话，按钮上会显示一个库里并不存在的音色，
+  // 一直到点了生成才报「先选一个音色」—— 不如当场清掉。
+  if (!v && STATE.clone.voice) STATE.clone.voice = "";
+
+  host.innerHTML = `
+    <button type="button" class="pickbtn" id="c-pick">
+      <span class="pickbtn__k">音色</span>
+      <span class="pickbtn__v${v ? "" : " is-empty"}">${v ? esc(v.name) : "点这里从音色库里选一个"}</span>
+      <svg class="pickbtn__c" width="14" height="14" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2" stroke-linecap="round"
+           stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+    </button>`;
+  $("#c-pick").addEventListener("click", async () => {
+    const name = await pickVoice({
+      title: "选择音色", current: STATE.clone.voice,
+      hint: "从音色库里挑一个。下面那栏能按克隆方式筛，选完可以先试听再生成。",
+    });
+    if (!name) return;
+    STATE.clone.voice = name;
+    renderCloneVoice();
+  });
+  syncXvecToVoice(v);
+  $("#c-lib-detail").innerHTML = v ? `
+    <div class="preview" style="margin-top:14px; flex-direction:column; align-items:stretch; gap:10px">
+      <div class="row-between">
+        <span class="hint">
+          时长 <b>${fmtDur(v.duration)}</b> · ${esc(v.length_hint)}
+          · 参考文本 <b>${v.chars}</b> 字
+          · 克隆方式 <b>${modeText(v)}</b>
+          · 基因 <b>${v.has_prompt ? "已生成" : "未生成"}</b>
+        </span>
+        ${v.has_prompt ? "" : `<button class="btn btn--soft btn--sm" data-role="gen">生成音色基因</button>`}
+      </div>
+      <div data-role="player"></div>
+      <div class="notes" style="padding:0" data-role="note"></div>
+    </div>` : "";
+
+  if (v) {
+    const ph = $('[data-role=player]', $("#c-lib-detail"));
+    const pl = buildPlayer(ph, { download: false });
+    pl.setURL("/media/voice/" + encodeURIComponent(v.name));
+    const gen = $('[data-role=gen]', $("#c-lib-detail"));
+    if (gen) gen.addEventListener("click", async () => {
+      const note = $('[data-role=note]', $("#c-lib-detail"));
+      gen.disabled = true;
+      note.innerHTML = noteHTML("正在抽取音色基因（要加载模型），几十秒内完成…", "info");
+      try {
+        const { job } = await post(`/api/voices/${encodeURIComponent(v.name)}/prompt`, { size: railOf("c").size() });
+        for (;;) {
+          const st = await api("/api/jobs/" + job);
+          if (st.state === "done" || st.state === "error") {
+            if (st.state === "error") throw new Error(st.message);
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 500));
+        }
+        note.innerHTML = noteHTML("音色基因已生成，之后用这个音色会直接命中缓存。", "ok");
+        await refreshVoices();
+      } catch (e) {
+        note.innerHTML = noteHTML(e.message, "error");
+      } finally { gen.disabled = false; }
+    });
+  }
+}
+
+async function refreshVoices() {
+  const r = await api("/api/voices");
+  BOOT.voices = r.voices || [];
+  syncVoiceCache();
+  renderCloneVoice();
+  renderLibrary();
+}
+
+let _cloneEditor = null;
+let _uploadInfo = null;
+
+function initUploadPane() {
+  const note = $("#c-up-note");
+  const showUploadState = () => {
+    const u = _uploadInfo;
+    $("#c-drop-t").innerHTML = u
+      ? `<b>${esc(u.original || u.name)}</b><span>已就绪 · ${fmtDur(u.duration)} · 可在下方波形上拖选取要用的片段</span>`
+      : `<b>点这里选择音频，或把文件拖进来</b>
+         <span>wav / mp3 / m4a / flac / ogg，建议 ${BOOT.limits?.ref_min_secs ?? 2}–${BOOT.limits?.ref_good_max_secs ?? 12} 秒干净人声</span>`;
+    $("#c-drop").classList.toggle("has", !!u);
+    $("#c-save").disabled = !u;
+  };
+  showUploadState();
+
+  const pick = () => $("#c-file").click();
+  $("#c-drop").addEventListener("click", (e) => { if (e.target.id !== "c-drop") return; pick(); });
+  $("#c-drop").addEventListener("dragover", (e) => { e.preventDefault(); $("#c-drop").classList.add("over"); });
+  $("#c-drop").addEventListener("dragleave", () => $("#c-drop").classList.remove("over"));
+  $("#c-drop").addEventListener("drop", (e) => {
+    e.preventDefault(); $("#c-drop").classList.remove("over");
+    const f = e.dataTransfer.files?.[0];
+    if (f) doUpload(f);
+  });
+  $("#c-file").addEventListener("change", () => {
+    const f = $("#c-file").files?.[0];
+    if (f) doUpload(f);
+    $("#c-file").value = "";
+  });
+
+  async function doUpload(file) {
+    const fd = new FormData();
+    fd.append("file", file, file.name);
+    $("#c-drop-t").innerHTML = `<b>正在上传…</b><span>${esc(file.name)}</span>`;
+    try {
+      const r = await api("/api/upload", { method: "POST", body: fd });
+      _uploadInfo = r;
+      STATE.clone.upload = r.name;
+      showUploadState();
+      _cloneEditor.load(r.url, r.original || r.name);
+      const lo = BOOT.limits?.ref_min_secs ?? 2, hi = BOOT.limits?.ref_good_max_secs ?? 12;
+      note.textContent = (r.duration < lo || r.duration > hi)
+        ? `这段 ${r.duration.toFixed(2)}s 不在建议区间（${lo}–${hi}s），建议在波形上拖选出气口完整的一段再存。`
+        : "长度合适。存进音色库后就能反复使用。";
+      toast("参考音频已就绪", "ok");
+    } catch (e) {
+      _uploadInfo = null; STATE.clone.upload = null;
+      showUploadState();
+      toast(e.message, "err");
+    }
+  }
+
+  $("#c-save").addEventListener("click", async () => {
+    if (!_uploadInfo) return;
+    const name = await promptName("把这段参考音频存成音色", "");
+    if (!name) return;
+    const sel = _cloneEditor.selection;
+    try {
+      const r = await postVoice({
+        name, upload: _uploadInfo.name,
+        ref_text: $("#c-ref-text").value.trim(),
+        xvec_only: $("#c-xvec").checked,
+        start: sel.start, end: sel.end,
+      });
+      await refreshVoices();
+      STATE.clone.src = "lib";
+      STATE.clone.voice = r.name;
+      setCloneSrc("lib");
+      toast(r.replaced ? "同名已覆盖" : `已保存音色「${r.name}」`, "ok");
+      // 不 await：基因是后台任务，别让它把「保存」这个动作拖住
+      followGeneJob(r.job, null);
+    } catch (e) { toast(e.message, "err"); }
+  });
+
+  // 转写「当前选区」而不是整个文件 —— 保存音色时用的也是这个选区，
+  // 两者必须对齐，否则参考文本会跟实际音频对不上。
+  mountTranscribe("#c-asr-slot", (btn) => {
+    if (!_uploadInfo) { toast("先上传一段参考音频", "warn"); return; }
+    const sel = _cloneEditor.selection;
+    doTranscribe(btn,
+      { upload: _uploadInfo.name, start: sel.start, end: sel.end },
+      $("#c-ref-text"), $("#c-ref-hint"));
+  });
+}
+
+function promptName(title, def, extra = "") {
+  return new Promise((resolve) => {
+    const m = openModal({
+      title,
+      body: `<div class="field"><label for="__nm">音色名</label>
+        <input class="input" id="__nm" value="${esc(def)}" placeholder="例如：御姐 / 韩立 / 旁白-男">
+        ${extra}
+        <p class="hint">会做非法字符清洗；音色名唯一，撞名了会问你要不要覆盖。</p></div>`,
+      foot: `<button class="btn btn--ghost" data-role="no">取消</button>
+             <button class="btn btn--primary" data-role="yes">确定</button>`,
+    });
+    const inp = m.$("#__nm");
+    inp.focus(); inp.select();
+    const done = (v) => { m.close(); resolve(v); };
+    m.$('[data-role=yes]').addEventListener("click", () => done(inp.value.trim()));
+    m.$('[data-role=no]').addEventListener("click", () => done(""));
+    inp.addEventListener("keydown", (e) => { if (e.key === "Enter") done(inp.value.trim()); });
+  });
+}
+
+/* ---------------------------------------------------------------------------
+   存音色（两处入口共用）
+   同名音色只能有一个 —— 后端不再悄悄改成「芳芳_2」，而是回一个
+   code=name_exists。撞名的多半是想覆盖，所以在这儿当场问一句；
+   答「不覆盖」就抛出去，让调用方按普通失败处理。
+--------------------------------------------------------------------------- */
+function askOverwrite(name) {
+  return new Promise((resolve) => {
+    const m = openModal({
+      title: "同名音色已存在",
+      body: `<p class="apidesc">音色库里已经有一个「<b>${esc(name)}</b>」。</p>
+             <p class="apidesc">覆盖 = 用这次的参考音频换掉它，原来的参考文本和音色基因一并作废。<br>
+             不想覆盖就取消，回去换个名字。</p>`,
+      foot: `<button class="btn btn--ghost" data-role="no">取消</button>
+             <button class="btn btn--danger-solid" data-role="yes">覆盖它</button>`,
+    });
+    m.$('[data-role=yes]').addEventListener("click", () => { m.close(); resolve(true); });
+    m.$('[data-role=no]').addEventListener("click", () => { m.close(); resolve(false); });
+  });
+}
+
+async function postVoice(body) {
+  try {
+    return await post("/api/voices", body);
+  } catch (e) {
+    if (!e.data || e.data.code !== "name_exists") throw e;   // 别的错原样往上抛
+    const dup = e.data.name || body.name || "";
+    if (!await askOverwrite(dup)) throw new Error(`音色 [${dup}] 已存在，已取消保存。`);
+    return post("/api/voices", { ...body, overwrite: true });
+  }
+}
+
+/* 声音设计的结果 → 音色库。
+   这一段音频和它念的字都是我们自己的，所以参考文本**逐字准确**，不走转写那套。
+   代价是：文本多长、参考音频就多长。超出建议区间（3–12 秒）时照存不误，
+   但在弹窗里说清楚 —— 完整 ICL 拿一段长音频当参考，往后每次生成都会更慢。 */
+async function saveDesignAsVoice(d) {
+  const p = d.params || {};
+  const lo = BOOT.limits?.ref_min_secs ?? 2, hi = BOOT.limits?.ref_good_max_secs ?? 12;
+  const dur = Number(d.duration) || 0;
+  const extra = (dur && (dur < lo || dur > hi))
+    ? `<p class="hint hint--warn">这段 ${dur.toFixed(2)}s，${dur > hi ? "偏长" : "偏短"}`
+      + `（建议 ${lo}–${hi} 秒）。存是能存，但拿它当参考音频会让之后每次生成都慢一些；`
+      + `想更利索，就先用短一点的字数重新设计一段。</p>`
+    : `<p class="hint">这段 ${dur ? dur.toFixed(2) + "s" : "音频"} · 参考文本 `
+      + `<b>${(p.text || "").length}</b> 字（就是你刚才写的那段，逐字对得上）。</p>`;
+  const name = await promptName("把这段生成结果存成音色", suggestVoiceName(p.instruct), extra);
+  if (!name) return;
+  try {
+    const r = await postVoice({
+      name,
+      out: d.file,                 // 直接指向 outputs/ 里那个文件，不用先复制一份
+      ref_text: p.text || "",
+      xvec_only: false,            // 文本是我们自己给的，完整 ICL 更稳
+    });
+    await refreshVoices();
+    toast(r.replaced ? `已覆盖音色「${r.name}」` : `已存成音色「${r.name}」`, "ok");
+    // 不 await：抽基因要加载模型，别把「存」这个动作拖住
+    followGeneJob(r.job, null);
+  } catch (e) { toast(e.message, "err"); }
+}
+
+/* 拿描述的开头当默认名字。设计出来的音色本来就没有名字，
+   让人从零想一个只会卡在这儿；截断按标点切，别切出半句话。 */
+function suggestVoiceName(desc) {
+  const s = String(desc || "").split(/[，。；、,.;\s]/)[0].trim();
+  return (s || "设计音色").slice(0, 12);
+}
+
+/* 复选框指向哪种模式 —— 参考文本那行提示始终跟着它走 */
+function syncXvecHint() {
+  const on = $("#c-xvec").checked;
+  $("#c-ref-hint").textContent = on
+    ? "当前是「只用说话人向量」，参考文本可以不填。"
+    : "当前是完整 ICL 模式 —— 这里必须逐字写准，写错会直接影响输出。";
+  syncInstructTip();
+}
+
+/* 情绪怎么调才有效 —— 这条提示的每个数字都是实测出来的
+   （tools/ab_emotion.py，仅向量、同一音色、每组 5–6 条比均值，看基频水平）：
+       标点原样 + 无指令   106.1 Hz
+       标点加强 + 无指令   114.8 Hz   只改标点 → +8.7
+       标点原样 + 描述句   117.0 Hz   只加指令 → +10.9
+       标点加强 + 描述句   148.3 Hz   两者一起 → +42.2（互相放大，不是叠加）
+   所以重点推「先改标点」。
+   曾经这里写的是「完整 ICL 会削弱指令」——**那条没有证据支持，已撤下**：
+   当时的判断建立在每条只跑一两次、且看错了指标（音高起伏基本不动，
+   真正响应的是基频水平）之上。留下这段注记，提醒别再拿单条样本下结论。 */
+const INSTR_LABEL_RE =
+  /(生气|愤怒|悲愤|悲痛|悲伤|绝望|开心|高兴|快乐|难过|伤心|哭|温柔|激动|兴奋|害怕|恐惧|紧张|委屈|无奈|冷酷|威严|惊讶|疑惑|嘲讽|蔑视|无力|虚弱|暴躁|癫狂)/;
+
+function looksLikeEmotionLabel(t) {
+  // 「情绪名」的形态：短，且整句基本就是那个词（没有描述动作的余地）
+  const s = t.trim().replace(/[，。！？、,\s]/g, "");
+  return s.length > 0 && s.length <= 10 && INSTR_LABEL_RE.test(s);
+}
+
+function syncInstructTip() {
+  const el = $("#c-instr-tip");
+  if (!el) return;
+  const v = $("#c-instruct").value.trim();
+  el.hidden = !v;
+  if (!v) return;
+
+  const isLabel = looksLikeEmotionLabel(v);
+  el.classList.toggle("hint--warn", isLabel);
+  el.textContent = isLabel
+    ? `「${v}」是情绪名，模型更需要「怎么念」。写音量·语速·重音落点·句尾走向·气息更稳；`
+      + "更省力的杠杆是标点 —— 把句号换成「——！」「……」，实测基频能抬高约 5 个半音。"
+    : "想再加强情绪，先动标点：把句号换成「——！」或「……」留出停顿与拖腔。"
+      + "实测「标点 + 描述句」一起用，基频比原样高约 42 Hz，远大于任一单项。";
+}
+
+/* 选中音色库的音色时，把「只用说话人向量」同步成这个音色保存时的设置。
+   不做这一步的话，复选框会一直停在自己的默认值上，把音色存的设置悄悄覆盖掉 ——
+   一个存为「完整 ICL」的音色，用起来其实是「仅向量」。
+   同步之后仍可当场改（这是每一次生成的开关），只是初值跟着音色走。 */
+function syncXvecToVoice(v) {
+  if (!v || typeof v.xvec_only !== "boolean") return;
+  const box = $("#c-xvec");
+  if (!box || box.checked === v.xvec_only) return;
+  box.checked = v.xvec_only;
+  syncXvecHint();
+}
+
+function setCloneSrc(src) {
+  STATE.clone.src = src;
+  $("#c-pane-lib").classList.toggle("hidden", src !== "lib");
+  $("#c-pane-up").classList.toggle("hidden", src !== "up");
+  $("#c-tab-lib").className = "btn btn--block " + (src === "lib" ? "btn--soft" : "btn--outline");
+  $("#c-tab-up").className = "btn btn--block " + (src === "up" ? "btn--soft" : "btn--outline");
+  $("#c-src-pill").textContent = src === "lib" ? "音色库" : "临时上传";
+}
+
+function initClone() {
+  $("#c-max").textContent = String(BOOT.limits?.max_text_chars ?? 2000);
+  syncXvecHint();
+  $("#c-xvec").addEventListener("change", syncXvecHint);
+
+  _cloneEditor = createEditor($("#c-editor"), {
+    saveLabel: "用这段存成音色",
+    onSave: () => $("#c-save").click(),
+  });
+
+  setCloneSrc("lib");
+  $("#c-tab-lib").addEventListener("click", () => setCloneSrc("lib"));
+  $("#c-tab-up").addEventListener("click", () => setCloneSrc("up"));
+  initUploadPane();
+  renderCloneVoice();
+
+  const ta = bindDraft("#c-text");
+  const sync = () => { $("#c-count").textContent = ta.value.trim().length + " 字"; };
+  ta.addEventListener("input", sync);
+  sync();                                    // 草稿回填后先把字数对上
+  $("#c-sample").addEventListener("click", () => {
+    ta.value = "这句话我想说得压着点，别太用力。前面那件事已经过去了，现在只把结论说清楚。";
+    sync();
+  });
+
+  const inst = bindDraft("#c-instruct");
+  inst.addEventListener("input", syncInstructTip);
+  inst.addEventListener("change", syncInstructTip);
+  syncInstructTip();
+
+  RAILS.c = renderRail("c", {
+    tip: "生成期间可以继续编辑，结果会自己刷新。",
+  });
+  renderAdv("c", [
+    "克隆模式下，参考音频的质量比模型规格更重要 —— 干净的 5 秒人声，胜过嘈杂的 30 秒。",
+  ]);
+
+  RAILS.c.go(async () => {
+    const text = ta.value.trim();
+    if (!text) { toast("请先输入要合成的文本", "warn"); return; }
+    if (text.length > (BOOT.limits?.max_text_chars ?? 2000)) {
+      toast("文本超出单次上限，请改用剧本工坊", "warn"); return;
+    }
+    const payload = {
+      mode: "clone", text, language: RAILS.c.lang(), size: RAILS.c.size(),
+      instruct: inst.value.trim(),
+      xvec_only: $("#c-xvec").checked,
+    };
+    if (STATE.clone.src === "lib") {
+      if (!STATE.clone.voice) { toast("先选一个音色", "warn"); return; }
+      payload.voice = STATE.clone.voice;
+    } else {
+      if (!_uploadInfo) { toast("先上传一段参考音频", "warn"); return; }
+      payload.ref_upload = _uploadInfo.name;
+      payload.ref_text = $("#c-ref-text").value.trim();
+      if (!payload.xvec_only && !payload.ref_text) {
+        toast("完整 ICL 模式必须填参考文本", "warn"); return;
+      }
+    }
+    const btn = $("#c-go");
+    btn.disabled = true;
+    await runJob(payload, RAILS.c.R);
+    btn.disabled = false;
+  });
+}
+
+/* ============================================================================
+   11. 视图：声音设计
+   ============================================================================ */
+function initDesign() {
+  const ta = bindDraft("#d-text"), inst = bindDraft("#d-instruct");
+  const sync = () => { $("#d-count").textContent = ta.value.trim().length + " 字"; };
+  ta.addEventListener("input", sync);
+  sync();
+
+  // 声音设计只有 1.7B 一套权重，规格选择器就只放这一项，免得给了假选项
+  RAILS.d = renderRail("d", { sizes: ["1.7B"], goLabel: "设计并生成" });
+  renderAdv("d", ["声音设计不需要参考音频，同一段描述每次结果会有细微差别，多跑几次挑满意的。"]);
+  $("#d-size").disabled = true;
+
+  RAILS.d.go(async () => {
+    const text = ta.value.trim(), desc = inst.value.trim();
+    if (!text) { toast("请先输入要合成的文本", "warn"); return; }
+    if (!desc) { toast("请写下你想要的音色描述", "warn"); return; }
+    const btn = $("#d-go");
+    btn.disabled = true;
+    await runJob({
+      mode: "design", text, instruct: desc, size: "1.7B",
+      language: RAILS.d.lang(),
+    }, RAILS.d.R);
+    btn.disabled = false;
+  });
+}
+
+/* ============================================================================
+   12. 视图：官方音色
+   ============================================================================ */
+const TRY_ICON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">'
+  + '<path d="M8 5v14l11-7z"/></svg>';
+
+function renderOfficialSpeakers() {
+  const host = $("#o-speakers");
+  host.innerHTML = (BOOT.speakers || []).map((s) => `
+    <div class="spkcard${STATE.official.speaker === s.key ? " is-on" : ""}" data-key="${esc(s.key)}">
+      <button type="button" class="spkcard__main" data-role="pick">
+        <b>${esc(s.key)}</b><span>${esc(s.label)}</span>
+      </button>
+      <button type="button" class="spkcard__try" data-role="try"
+              title="试听 ${esc(s.key)}" aria-label="试听 ${esc(s.key)}">${TRY_ICON}</button>
+    </div>`).join("");
+  $$("[data-role=pick]", host).forEach((b) => b.addEventListener("click", () => {
+    STATE.official.speaker = b.closest(".spkcard").dataset.key;
+    renderOfficialSpeakers();
+  }));
+  $$("[data-role=try]", host).forEach((b) => b.addEventListener("click", () => {
+    auditionSpeaker(b.closest(".spkcard").dataset.key, b);
+  }));
+  const cur = (BOOT.speakers || []).find((s) => s.key === STATE.official.speaker);
+  $("#o-spk-pill").textContent = cur ? cur.key : "—";
+}
+
+/* 试听官方说话人。样例得真跑一次模型：头一回点要等十几到几十秒，
+   生成完就落在 web/_preview/ 里，之后再点几乎立刻出声。
+
+   连点多个说话人时**排队**，而不是一起把请求发出去 —— 模型只有一个，
+   两路生成同时进 CUDA graph 会互相踩，出来的音频会张冠李戴。 */
+let TRY_SEQ = 0;
+let TRY_QUEUE = Promise.resolve();
+
+function auditionSpeaker(key, btn) {
+  const seq = ++TRY_SEQ;
+  btn.disabled = true;
+  const task = async () => {
+    try {
+      await tryOneSpeaker(key, seq);
+    } catch (e) {
+      toast("试听失败：" + e.message, "err");
+    } finally {
+      btn.disabled = false;
+    }
+  };
+  TRY_QUEUE = TRY_QUEUE.then(task, task);
+  return TRY_QUEUE;
+}
+
+async function tryOneSpeaker(key, seq) {
+  const r = await post(`/api/speakers/${encodeURIComponent(key)}/preview`,
+                       { size: RAILS.o.size() });
+  let url = r.url;
+  if (!url) {
+    toast(`${key} 的试听要先生成一次，正在加载模型…`, "ok");
+    for (;;) {
+      const st = await api("/api/jobs/" + r.job);
+      if (st.state === "done") { url = (st.result || {}).url; break; }
+      if (st.state === "error") throw new Error(st.message);
+      await new Promise((res) => setTimeout(res, 400));
+    }
+  }
+  // 连点了好几个时，只让最后点的那个自动出声，前面几个静静把缓存铺好
+  if (seq !== TRY_SEQ) return;
+  openPlayer($("#o-try"), url, `${key}.wav`, { download: false });
+}
+
+function renderOfficialNote() {
+  const eff = RAILS.o.size() === "auto" ? (BOOT.hardware?.default_size || "1.7B") : RAILS.o.size();
+  $("#o-note-06").innerHTML = eff === "0.6B"
+    ? noteHTML("当前选的是 0.6B：内核会把情感指令强制置空，多人对话也会被拒绝。"
+      + "要演情绪或对话，请把右侧「模型规格」切到 1.7B。", "warn")
+    : "";
+}
+
+async function previewText(text, mode) {
+  return post("/api/script/preview", { text, mode });
+}
+
+function scriptPreviewHTML(pv, { knownHint = "" } = {}) {
+  const { lines, issues, stats } = pv;
+  if (!lines.length) {
+    return `<div class="empty"><b>还没有内容</b>每行写 <code>[角色] 台词</code>，这里会实时解析。</div>`;
+  }
+  const rows = lines.map((ln) => ln.ok
+    ? `<div class="sline"><span class="sline__n">${ln.index}</span>
+         <span class="sline__r">${esc(ln.role)}</span>
+         ${ln.instruct ? `<span class="sline__i">${esc(ln.instruct)}</span>` : ""}
+         <span class="sline__c">${esc(ln.content)}</span></div>`
+    : `<div class="sline bad"><span class="sline__n">${ln.index}</span>
+         <span class="sline__c">${esc(ln.raw || "")}
+           <b>—— ${esc(ln.issue || "格式不正确")}</b></span></div>`).join("");
+  return `
+    <div class="card__body">
+      <div class="metrics" style="margin:0">
+        <span class="metric">行<b>${stats.total_lines}</b></span>
+        <span class="metric">可合成<b>${stats.ok_lines}</b></span>
+        <span class="metric">角色<b>${stats.role_count}</b></span>
+        <span class="metric">带情感<b>${stats.instruct_lines}</b></span>
+        <span class="metric">字数<b>${stats.chars}</b></span>
+      </div>
+      ${issues.length
+        // 逐行的问题在下面那些红行里已经写全了（行号 + 原句 + 原因），
+        // 这里再整段念一遍就是复读 —— 只留「全都对」这一句肯定语。
+        // 其中「音色不在库里」那一类由 knownHint 单独说（它还带着可用音色清单）。
+        ? ""
+        : noteHTML("每一行都能解析。", "ok")}
+      ${knownHint}
+    </div>
+    <div class="scriptpre">${rows}</div>`;
+}
+
+function initOfficial() {
+  const ta = bindDraft("#o-text"), inst = bindDraft("#o-instruct");
+  const sync = () => { $("#o-count").textContent = ta.value.trim().length + " 字"; };
+  ta.addEventListener("input", sync);
+  sync();
+  $("#o-sample").addEventListener("click", () => {
+    ta.value = "[vivian][轻快地] 你终于来了，我还以为你今天不来了。\n"
+             + "[uncle_fu][低沉] 路上耽搁了一会儿。这雨，下得没有道理。\n"
+             + "[vivian][压低了声音] 小声点 —— 里面那位，不太高兴。";
+    sync();
+  });
+
+  $("#o-preview").addEventListener("click", async () => {
+    const text = ta.value.trim();
+    if (!text) { toast("先写点文本", "warn"); return; }
+    try {
+      const pv = await previewText(text, "official");
+      openModal({
+        title: "结构预览",
+        body: scriptPreviewHTML(pv, {
+          knownHint: pv.stats.role_count
+            ? ""
+            : noteHTML("没有识别到 [说话人] 前缀，会按单人一次性生成。", "info"),
+        }),
+        foot: `<button class="btn btn--primary" data-role="x2">知道了</button>`,
+      }).$('[data-role=x2]').addEventListener("click", (e) => {
+        e.target.closest("dialog").close();
+      });
+    } catch (e) { toast(e.message, "err"); }
+  });
+
+  renderOfficialSpeakers();
+  RAILS.o = renderRail("o", { goLabel: "用这个说话人生成" });
+  renderAdv("o", [
+    "多人对话会把每一句单独生成再拼接，句间会插入一小段静音；逐句之间的音色衔接由模型自身保证。",
+  ]);
+  $("#o-size").addEventListener("change", renderOfficialNote);
+  renderOfficialNote();
+
+  RAILS.o.go(async () => {
+    const text = ta.value.trim();
+    if (!text) { toast("请先输入文本", "warn"); return; }
+    const payload = {
+      mode: "official", text, language: RAILS.o.lang(), size: RAILS.o.size(),
+      speaker: STATE.official.speaker, instruct: inst.value.trim(),
+    };
+    const eff = RAILS.o.size() === "auto" ? (BOOT.hardware?.default_size || "1.7B") : RAILS.o.size();
+    if (eff === "0.6B" && /^\s*\[/m.test(text)) {
+      toast("0.6B 不支持多人对话，请切到 1.7B", "warn");
+      return;
+    }
+    const btn = $("#o-go");
+    btn.disabled = true;
+    const r = await runJob(payload, RAILS.o.R);
+    if (r.ok) refreshHistory();
+    btn.disabled = false;
+  });
+}
+
+/* ============================================================================
+   13. 视图：剧本工坊
+   ============================================================================ */
+let _scriptTimer = 0;
+
+/* ---------------------------------------------------------------------------
+   剧本框的行内高亮（解析预览并进输入框）
+   角色、情感指令、台词在框里就分色，不用再往下看一张表。
+   做法见上面 CSS 那段注释：**叠一层**，不是 contenteditable。
+--------------------------------------------------------------------------- */
+let SCRIPT_BAD = new Set();   // 最近一次解析里「没法解析」的那些行的原文，用来标红
+
+/* 只把行首的方括号组包上颜色，**其余一个字都不改**。
+   颜色是「在原文上加壳」，不是「按解析结果重拼一行」—— 解析会把行首空白、
+   括号内外的空格都规整掉（`content` 是 strip 过的），按它重拼必然跟上面那层错位。
+   所以位置直接由原文里的 [ ] 决定，解析结果只用来回答「这行能不能解析」。 */
+function hlLineHTML(raw) {
+  const m = raw.match(/^(\s*)(\[[^\[\]]*\])(\[[^\[\]]*\])?/);
+  const body = m
+    ? esc(m[1]) + `<span class="hl-role">${esc(m[2])}</span>`
+      + (m[3] ? `<span class="hl-inst">${esc(m[3])}</span>` : "")
+      + esc(raw.slice(m[0].length))
+    : esc(raw);
+  // 空行不放占位字符（放了就跟 textarea 的正文对不上了，两层的文本必须一模一样）——
+  // 高度由 .hl-line 的 min-height 撑住
+  return `<div class="hl-line${SCRIPT_BAD.has(raw) ? " is-bad" : ""}">${body}</div>`;
+}
+
+function renderScriptHighlight() {
+  const ta = $("#s-text"), hl = $("#s-hl");
+  if (!ta || !hl) return;
+  hl.innerHTML = ta.value.split("\n").map(hlLineHTML).join("");
+  syncScriptHighlight();
+}
+
+/* 高亮层不会自己跟着滚 —— 它跟 textarea 是两个节点。列宽也要跟着改：
+   textarea 一出现纵向滚动条，可写宽度就少十几个像素，不跟着改会整片错位。 */
+function syncScriptHighlight() {
+  const ta = $("#s-text"), hl = $("#s-hl");
+  if (!ta || !hl) return;
+  hl.style.width = ta.clientWidth + "px";
+  hl.style.height = ta.clientHeight + "px";
+  hl.scrollTop = ta.scrollTop;
+}
+
+async function updateScriptPreview() {
+  const text = $("#s-text").value;
+  const lines = text.split("\n").filter((l) => l.trim()).length;
+  $("#s-count").textContent = lines + " 行";
+  // 先把高亮层跟正文对齐（颜色沿用上一次解析的结论），再等解析回来刷新颜色。
+  // 顺序反过来的话，打字期间下面那层会一直停在旧文本上，看起来就是重影。
+  renderScriptHighlight();
+  if (!text.trim()) {
+    $("#s-tidy").disabled = true;
+    SCRIPT_BAD = new Set();
+    $("#s-stats").classList.add("hidden");
+    $("#s-stats").innerHTML = "";
+    $("#s-issues").innerHTML = "";
+    return;
+  }
+  $("#s-tidy").disabled = false;
+  try {
+    const pv = await previewText(text, "script");
+    // 只有**解析不过**的行才标红。「音色不在库里」不算 —— 那一行格式是对的
+    // （解析器认可），标红会跟下面那条汇总提示打架。
+    SCRIPT_BAD = new Set(pv.lines.filter((l) => !l.ok).map((l) => l.raw || ""));
+    renderScriptHighlight();
+
+    const s = pv.stats;
+    $("#s-stats").classList.remove("hidden");
+    $("#s-stats").innerHTML = [
+      ["行", s.total_lines], ["可合成", s.ok_lines], ["角色", s.role_count],
+      ["带情感", s.instruct_lines], ["字数", s.chars],
+    ].map(([k, v]) => `<span class="metric">${esc(k)}<b>${v}</b></span>`).join("");
+
+    const bad = pv.lines.filter((l) => !l.ok);
+    const missing = pv.issues.filter((i) => i.includes("不在库里"));
+    $("#s-issues").innerHTML =
+      // 哪几行有问题，框里已经用红底标出来了，这里只说**为什么** ——
+      // 之前两边都把原因各念一遍才叫重复，现在一边负责「在哪」、一边负责「为什么」。
+      (bad.length ? noteHTML(bad.map((l) => `第 ${l.index} 行：${l.issue}`).join("\n"), "warn") : "")
+      + (missing.length
+        ? noteHTML(`有 ${missing.length} 行用的音色不在库里，这些行会被跳过。`
+          + `点右上角「去音色库补音色」新建，或把角色名改成已有音色：`
+          + VOICES.map((v) => v.name).join(" / "), "error")
+        : "")
+      + (!bad.length && !missing.length ? noteHTML("每一行都能解析。", "ok") : "");
+  } catch (e) { $("#s-issues").innerHTML = noteHTML(e.message, "error"); }
+}
+
+/* 插到光标处。光标停在某行中间时另起一行 —— 一行只能有一个行首角色，
+   插在中间会把那一行切成「半句台词」+「角色名」，解析出来两边都不对。 */
+function insertRoleName(name) {
+  const ta = $("#s-text");
+  if (!ta) return;
+  const s = ta.selectionStart ?? ta.value.length;
+  const e = ta.selectionEnd ?? s;
+  const before = ta.value.slice(0, s);
+  const ins = (before && !before.endsWith("\n") ? "\n" : "") + `[${name}] `;
+  ta.value = before + ins + ta.value.slice(e);
+  const caret = before.length + ins.length;
+  ta.setSelectionRange(caret, caret);
+  ta.focus();
+  _draftWrite();          // 程序赋值不派发 input，草稿得自己存一次
+  clearTimeout(_scriptTimer);
+  updateScriptPreview();
+}
+
+function initScript() {
+  const ta = bindDraft("#s-text");   // 草稿在这里回填，末尾那次 updateScriptPreview() 会把它一起解析出来
+  ta.addEventListener("input", () => {
+    // 高亮层要**立刻**跟上，不能等那次防抖 —— 慢 240ms 就是「字打出来了、
+    // 底下的彩色副本还停在上一个字」，看起来是重影。这一步不碰接口，很便宜。
+    renderScriptHighlight();
+    clearTimeout(_scriptTimer);
+    _scriptTimer = setTimeout(updateScriptPreview, 240);
+  });
+  ta.addEventListener("scroll", syncScriptHighlight);
+  // 拖动右下角改高度、窗口变窄、滚动条出现/消失 —— 都会改变可写宽度
+  new ResizeObserver(syncScriptHighlight).observe(ta);
+  // 输入法拼字期间要把两层换过来（见 CSS 那段注释）：拼字串是 textarea 自己画的，
+  // 文字透明就什么都看不见。
+  const box = $("#s-box");
+  ta.addEventListener("compositionstart", () => box.classList.add("is-composing"));
+  ta.addEventListener("compositionend", () => {
+    box.classList.remove("is-composing");
+    renderScriptHighlight();
+  });
+  $("#s-sample").addEventListener("click", () => {
+    ta.value = "[韩立][压低了声音] 此丹的药力，恐怕不止于此。\n"
+             + "[南宫婉] 你是说……服下之后会有异动？\n"
+             + "[韩立] 三日内必有反应。若三日无事，便是我想错了。\n"
+             + "[南宫婉][轻声] 那便等三日。";
+    updateScriptPreview();
+  });
+  $("#s-tidy").addEventListener("click", async () => {
+    try {
+      const pv = await previewText(ta.value, "script");
+      const good = pv.lines.filter((l) => l.ok);
+      if (!good.length) { toast("没有一行能解析，无从整理", "warn"); return; }
+      ta.value = good.map((l) => `[${l.role}]` + (l.instruct ? `[${l.instruct}]` : "") + ` ${l.content}`).join("\n");
+      updateScriptPreview();
+      toast(`已整理 ${good.length} 行`, "ok");
+    } catch (e) { toast(e.message, "err"); }
+  });
+
+  // 委托到容器上：快捷条的内容会整片重建（存完音色 refreshVoices 就会重画），
+  // 角色名错一个字，那一行就被整个跳过 —— 手打一遍是纯粹的风险。
+  // 弹窗里挑一个，插到光标处。（以前是把整个音色库铺成一排按钮贴在这儿，
+  // 音色一多就变成一堵墙，跟「选音色」那条路一起收成了按钮 + 弹窗。）
+  $("#s-pick").addEventListener("click", async () => {
+    const name = await pickVoice({
+      title: "插入角色音色",
+      hint: "挑中的音色名会插到光标处。剧本每行的行首就是这个角色名，"
+          + "所以它必须和音色库里的名字一字不差。",
+    });
+    if (name) insertRoleName(name);
+  });
+
+  RAILS.s = renderRail("s", { goLabel: "合成整段剧本" });
+  renderAdv("s", [
+    "每行会按本机单段上限继续切分；同一角色的多段会尽量复用音色基因与内核缓存。",
+    "有任何一行的角色不在音色库里，那一行会被跳过 —— 输出不会因此失败，但会在结果里列出提醒。",
+  ]);
+
+  RAILS.s.go(async () => {
+    const text = ta.value.trim();
+    if (!text) { toast("请先写剧本", "warn"); return; }
+    const pv = await previewText(text, "script").catch(() => null);
+    if (!pv || !pv.stats.ok_lines) { toast("没有一行能解析，请检查格式", "warn"); return; }
+    const missing = pv.issues.filter((i) => i.includes("不在库里"));
+    if (missing.length === pv.stats.ok_lines) {
+      toast("所有角色的音色都不在库里", "warn"); return;
+    }
+    if (missing.length) toast(`${missing.length} 行因缺音色会被跳过`, "warn");
+    const btn = $("#s-go");
+    btn.disabled = true;
+    await runJob({
+      mode: "script", text, language: RAILS.s.lang(), size: RAILS.s.size(),
+    }, RAILS.s.R);
+    btn.disabled = false;
+  });
+
+  updateScriptPreview();
+}
+
+/* ============================================================================
+   14. 视图：音色库
+   ============================================================================ */
+function voiceCardHTML(v) {
+  const picked = STATE.library.picked.has(v.name);
+  return `<div class="vitem${picked ? " is-picked" : ""}" data-name="${esc(v.name)}">
+    <input class="vcheck" type="checkbox" ${picked ? "checked" : ""}
+           aria-label="选择 ${esc(v.name)}" data-role="pick">
+    <div class="vitem__top">
+      <span class="vitem__name">${esc(v.name)}</span>
+      <span class="sp"></span>
+      ${modePillHTML(v)}
+      <span class="pill durpill${v.length_hint === "偏长" ? " long" : ""}">${fmtDur(v.duration)}</span>
+      ${v.length_hint === "偏短" ? `<span class="pill pill--warn">偏短</span>` : ""}
+      ${v.has_prompt ? `<span class="pill pill--ok">基因</span>` : `<span class="pill">无基因</span>`}
+    </div>
+    <p class="vitem__ref">${v.ref_text
+      ? esc(v.ref_text)
+      : "未填参考文本（仅说话人向量模式可留空）"}</p>
+    <div class="vitem__foot">
+      <button class="btn btn--outline btn--sm" data-role="play">试听</button>
+      <button class="btn btn--ghost btn--sm" data-role="trim">裁剪</button>
+      <button class="btn btn--ghost btn--sm" data-role="text">参考文本</button>
+      <button class="btn btn--ghost btn--sm" data-role="use">去克隆</button>
+    </div>
+    <div class="hrow__slot" data-role="slot"></div>
+  </div>`;
+}
+
+/* 按克隆方式筛选。用来一眼挑出「哪些音色走的是必须写准参考文本的完整 ICL」。 */
+function renderLibraryFilter() {
+  const host = $("#l-filter");
+  if (!host) return;
+  const n = (f) => VOICES.filter(f).length;
+  const opts = [
+    ["all", `全部 ${VOICES.length}`],
+    ["xvec", `仅向量 ${n((v) => v.xvec_only)}`],
+    ["icl", `完整 ICL ${n((v) => !v.xvec_only)}`],
+  ];
+  host.innerHTML = opts.map(([k, label]) =>
+    `<button type="button" class="btn btn--sm ${STATE.library.mode === k ? "btn--soft" : "btn--ghost"}"
+             data-mode="${k}">${label}</button>`).join("");
+  $$("[data-mode]", host).forEach((b) => b.addEventListener("click", () => {
+    STATE.library.mode = b.dataset.mode;
+    renderLibrary();
+  }));
+}
+
+/* 模糊匹配：先按子串找，找不到再退一步按「顺序出现的字符」找。
+   音色名多是「芳芳」「旁白-男」这种短词，纯 includes 太死 ——
+   打「旁男」想找「旁白-男」、打「ff」想找「芳芳Fang」都得能命中。
+   只比名字，不比参考文本：正文里随机命中一个词就跳出一张卡，比找不到更让人迷惑。 */
+function fuzzyHit(name, q) {
+  const s = String(name).toLowerCase();
+  const t = q.trim().toLowerCase();
+  if (!t) return true;
+  if (s.includes(t)) return true;
+  let i = 0;
+  for (const ch of s) {
+    if (ch === t[i]) i += 1;
+    if (i === t.length) return true;
+  }
+  return false;
+}
+
+function visibleVoices() {
+  const m = STATE.library.mode;
+  let list = VOICES;
+  if (m === "xvec") list = list.filter((v) => v.xvec_only);
+  else if (m === "icl") list = list.filter((v) => !v.xvec_only);
+  if (STATE.library.q.trim()) list = list.filter((v) => fuzzyHit(v.name, STATE.library.q));
+  return list;
+}
+
+/* 概要行跟着筛选走：筛完只剩 2 个、右上角还写着「共 12 个音色」，
+   第一反应是「筛选没生效」，然后就会去点别的按钮。 */
+function renderLibrarySummary() {
+  const el = $("#l-summary");
+  if (!el) return;
+  const total = VOICES.length;
+  const shown = visibleVoices().length;
+  if (shown !== total) {
+    el.textContent = `筛出 ${shown} / 共 ${total} 个音色`;
+    return;
+  }
+  const long = VOICES.filter((v) => v.length_hint === "偏长").length;
+  const short = VOICES.filter((v) => v.length_hint === "偏短").length;
+  el.textContent = `共 ${total} 个音色`
+    + (short ? ` · ${short} 个偏短` : "") + (long ? ` · ${long} 个偏长` : "");
+}
+
+function initLibrarySearch() {
+  const box = $("#l-q");
+  if (!box) return;
+  box.value = STATE.library.q;   // 从别的页面切回来时，把上次的筛选词放回框里
+  box.addEventListener("input", () => {
+    STATE.library.q = box.value;
+    renderLibrary();
+  });
+  // 输入框上按 Esc 等于清空：type=search 的原生 ✕ 只在 WebKit 系有，留个通用的口子
+  box.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !box.value) return;
+    e.stopPropagation();          // 别把 Esc 递给弹窗那层的关闭逻辑
+    box.value = "";
+    STATE.library.q = "";
+    renderLibrary();
+  });
+}
+
+function renderLibrary() {
+  const host = $("#l-grid-host");
+  if (!host) return;
+  renderLibraryFilter();
+  renderLibrarySummary();
+  // 重建列表前先把槽位里的声音停掉 —— 节点会被整片换掉，
+  // 那个 Audio 元素就再没人 pause 了（基因任务跑完会自动刷新列表，
+  // 正好赶在试听播放中间是常有的事）。只停本列表里的，别的视图不受影响。
+  $$('[data-role=slot]', host).forEach((s) => { try { s._stopAudio?.(); } catch (_) {} });
+  hideTip();   // 浮层指着的那一行马上就被换掉了，留着它只会指错东西
+  if (!VOICES.length) {
+    host.innerHTML = `<div class="card"><div class="empty">
+      <b>音色库还是空的</b>
+      点右上角「新增音色」上传一段 3–12 秒的干净人声，<br>
+      或者在「语音克隆」页临时上传后用「存进音色库」。</div></div>`;
+    renderLibraryRail();
+    return;
+  }
+  const list = visibleVoices();
+  if (!list.length) {
+    const key = STATE.library.q.trim();
+    host.innerHTML = key
+      ? `<div class="card"><div class="empty">
+          <b>没有名字匹配「${esc(key)}」的音色</b>
+          换个词试试，或者 <button class="link" data-role="clearq">清空筛选</button>。</div></div>`
+      : `<div class="card"><div class="empty">
+          <b>没有符合当前筛选的音色</b>当前这一档一个都没有，点上面的「全部」看所有音色。</div></div>`;
+    if (key) $('[data-role=clearq]', host).addEventListener("click", () => {
+      STATE.library.q = "";
+      const box = $("#l-q");
+      if (box) box.value = "";
+      renderLibrary();
+    });
+    renderLibraryRail();
+    return;
+  }
+  host.innerHTML = `<div class="vgrid">${list.map(voiceCardHTML).join("")}</div>`;
+
+  $$(".vitem", host).forEach((card) => {
+    const name = card.dataset.name;
+    const slot = $('[data-role=slot]', card);
+    const pick = $('[data-role=pick]', card);
+    pick.addEventListener("change", () => {
+      if (pick.checked) STATE.library.picked.add(name);
+      else STATE.library.picked.delete(name);
+      card.classList.toggle("is-picked", pick.checked);
+      renderLibraryRail();
+    });
+    $('[data-role=play]', card).addEventListener("click", () => {
+      if (slot.dataset.open === "1") { closeSlot(slot); return; }
+      openPlayer(slot, "/media/voice/" + encodeURIComponent(name), name + ".wav");
+    });
+    $('[data-role=use]', card).addEventListener("click", () => {
+      STATE.clone.voice = name;
+      STATE.clone.src = "lib";
+      setCloneSrc("lib");
+      renderCloneVoice();
+      gotoView("clone");
+      toast(`已选中音色「${name}」`, "ok");
+    });
+    $('[data-role=trim]', card).addEventListener("click", () => openTrim(name, slot));
+    $('[data-role=text]', card).addEventListener("click", () => openRefText(name));
+  });
+  renderLibraryRail();
+}
+
+/* 裁剪换掉了参考音频，旧的参考文本必然对不上 —— 完整 ICL 下写错会直接污染输出，
+   所以裁完就按新音频重转一遍写回去，不用再进「参考文本」弹窗点一次。
+   转写不可用、或没识别到内容时**保留原文**：宁可留着旧文本，也不拿空值覆盖。 */
+async function retranscribeVoice(name) {
+  if (!(BOOT.asr && BOOT.asr.available)) {
+    toast(`已裁剪 · 参考文本未更新：自动转写不可用（${BOOT.asr?.reason || "缺依赖"}）`, "warn");
+    return;
+  }
+  toast("已裁剪 · 正在按新音频重转参考文本…", "ok");
+  try {
+    const r = await post("/api/transcribe", { voice: name });
+    const text = (r.text || "").trim();
+    if (!text) { toast("没识别到文本，参考文本保持原样", "warn"); return; }
+    await post(`/api/voices/${encodeURIComponent(name)}/text`, { ref_text: text });
+    await refreshVoices();
+    toast(`参考文本已自动重转（${text.length} 字）—— 请核对`, "ok");
+  } catch (e) { toast("参考文本重转失败：" + e.message, "err"); }
+}
+
+function openTrim(name, slot) {
+  if (slot.dataset.open === "1" && slot.dataset.mode === "trim") {
+    closeSlot(slot); return;
+  }
+  closeSlot(slot);                 // 槽位可能正放着试听播放器，先把声音停掉再换内容
+  slot.dataset.open = "1"; slot.dataset.mode = "trim";
+  const wrap = document.createElement("div");
+  slot.appendChild(wrap);
+  const ed = createEditor(wrap, {
+    saveLabel: "保存裁剪",
+    onSave: async ({ start, end }) => {
+      try {
+        await post(`/api/voices/${encodeURIComponent(name)}/trim`, { start, end });
+        closeSlot(slot);
+        await refreshVoices();
+        await retranscribeVoice(name);   // 音频变了，文本得跟着重来
+      } catch (e) { toast(e.message, "err"); }
+    },
+  });
+  slot._stopAudio = ed.stopPlay;   // 编辑器自己的试听也要能被「收起」停掉
+  ed.load("/media/voice/" + encodeURIComponent(name) + "?t=" + Date.now(), name);
+}
+
+function openRefText(name) {
+  const v = VOICES.find((x) => x.name === name);
+  const m = openModal({
+    title: `参考文本 · ${name}`,
+    body: `<div class="field">
+        <div class="row-between">
+          <label for="__rt">这段参考音频里，逐字说的是什么</label>
+          <span id="rt-asr-slot"></span>
+        </div>
+        <textarea class="textarea" id="__rt" rows="4"
+          placeholder="逐字照抄，不要改写、不要补标点"></textarea>
+        <p class="hint">只有在关掉「只用说话人向量」（即完整 ICL 模式）时才必需。
+          写错会直接污染输出，不确定就保持说话人向量模式。</p>
+        <div class="notes mt" id="__rt-note" style="padding:0"></div>
+      </div>`,
+    foot: `<button class="btn btn--ghost" data-role="no">取消</button>
+           <button class="btn btn--ghost" data-role="clear">清空</button>
+           <button class="btn btn--primary" data-role="yes">保存</button>`,
+  });
+  const ta = m.$("#__rt");
+  // 预填充现有文本：早先这里写死成空串，编辑已有的参考文本等于每次都要重打一遍
+  ta.value = v?.ref_text || "";
+  mountTranscribe("#rt-asr-slot", (btn) =>
+    doTranscribe(btn, { voice: name }, ta, m.$("#__rt-note")));
+
+  m.$('[data-role=yes]').addEventListener("click", async () => {
+    try {
+      await post(`/api/voices/${encodeURIComponent(name)}/text`, { ref_text: ta.value.trim() });
+      m.close();
+      toast("参考文本已更新", "ok");
+      await refreshVoices();
+    } catch (e) { toast(e.message, "err"); }
+  });
+  m.$('[data-role=clear]').addEventListener("click", () => { ta.value = ""; ta.focus(); });
+  m.$('[data-role=no]').addEventListener("click", () => m.close());
+  ta.focus();
+}
+
+function renderLibraryRail() {
+  const rail = $("#l-rail");
+  if (!rail) return;
+  const picked = [...STATE.library.picked];
+  const total = VOICES.length;
+  const ready = VOICES.filter((v) => v.has_prompt).length;
+  const short = VOICES.filter((v) => v.length_hint === "偏短").length;
+  const long = VOICES.filter((v) => v.length_hint === "偏长").length;
+  const xv = VOICES.filter((v) => v.xvec_only).length;
+
+  rail.innerHTML = `
+    <div class="card">
+      <div class="card__head"><h2>概览</h2></div>
+      <div class="card__body">
+        <div class="pmeta">
+          <div class="pmeta__c"><i>音色总数</i><b>${total}</b></div>
+          <div class="pmeta__c"><i>已有基因</i><b>${ready} / ${total}</b></div>
+          <div class="pmeta__c"><i>参考音频偏短</i><b>${short}</b></div>
+          <div class="pmeta__c"><i>参考音频偏长</i><b>${long}</b></div>
+          <div class="pmeta__c is-wide"><i>克隆方式</i>
+            <b>仅向量 ${xv} · 完整 ICL ${total - xv}</b></div>
+        </div>
+        <p class="hint mt">建议参考音频在 ${BOOT.limits?.ref_min_secs ?? 2}–${BOOT.limits?.ref_good_max_secs ?? 12} 秒之间，
+          气口完整、无背景音乐、无混响。</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card__head"><h2>批量操作</h2>
+        <span class="pill sp">${picked.length} 个已选</span></div>
+      <div class="card__body">
+        <div class="railact">
+          <button class="btn btn--soft btn--block btn--sm" data-role="all">全选 / 取消全选</button>
+          <button class="btn btn--outline btn--block btn--sm" data-role="bulk-prompt">为选中项生成音色基因</button>
+          <button class="btn btn--danger btn--block btn--sm" data-role="bulk-del">删除选中项</button>
+        </div>
+        <div class="notes mt" data-role="note" style="padding:0"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card__head"><h2>参考音频怎么挑</h2></div>
+      <div class="card__body">
+        <table class="kv">
+          <tr><th>时长</th><td>${BOOT.limits?.ref_min_secs ?? 2}–${BOOT.limits?.ref_good_max_secs ?? 12} 秒最佳</td></tr>
+          <tr><th>内容</th><td>连续自然说话，不要在句中切断</td></tr>
+          <tr><th>环境</th><td>安静、无混响、无背景音乐</td></tr>
+          <tr><th>格式</th><td>任意常见格式，工具会自动重采样为单声道</td></tr>
+        </table>
+        ${noteHTML("克隆的成败八成在参考音频上，不在模型规格上。", "info")}
+      </div>
+    </div>`;
+
+  const note = $('[data-role=note]', rail);
+  $('[data-role=all]', rail).addEventListener("click", () => {
+    if (STATE.library.picked.size === VOICES.length) STATE.library.picked.clear();
+    else VOICES.forEach((v) => STATE.library.picked.add(v.name));
+    renderLibrary();
+  });
+  $('[data-role=bulk-del]', rail).addEventListener("click", async () => {
+    const names = [...STATE.library.picked];
+    if (!names.length) { note.innerHTML = noteHTML("先勾选要删的音色。", "warn"); return; }
+    const m = openModal({
+      title: "确认删除",
+      body: `<p class="apidesc">将删除以下 ${names.length} 个音色，连同它们的参考音频、参考文本与音色基因：</p>
+        <div class="notes mt" style="padding:0">${noteHTML(names.join("、"), "warn")}</div>`,
+      foot: `<button class="btn btn--ghost" data-role="no">取消</button>
+             <button class="btn btn--danger-solid" data-role="yes">确认删除</button>`,
+    });
+    m.$('[data-role=yes]').addEventListener("click", async () => {
+      try {
+        const r = await post("/api/voices/delete", { names });
+        m.close();
+        STATE.library.picked.clear();
+        toast(`已删除 ${r.deleted} 个音色`, "ok");
+        await refreshVoices();
+      } catch (e) { toast(e.message, "err"); }
+    });
+    m.$('[data-role=no]').addEventListener("click", () => m.close());
+  });
+  $('[data-role=bulk-prompt]', rail).addEventListener("click", async () => {
+    const names = [...STATE.library.picked].filter((n) => !VOICES.find((v) => v.name === n)?.has_prompt);
+    if (!names.length) { note.innerHTML = noteHTML("选中的音色都已经有基因了。", "info"); return; }
+    note.innerHTML = noteHTML(`正在为 ${names.length} 个音色抽取基因，逐个进行…`, "info");
+    let done = 0;
+    for (const n of names) {
+      try {
+        const { job } = await post(`/api/voices/${encodeURIComponent(n)}/prompt`, { size: RAILS.c.size() });
+        for (;;) {
+          const st = await api("/api/jobs/" + job);
+          if (st.state === "done" || st.state === "error") {
+            if (st.state === "error") throw new Error(st.message);
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 500));
+        }
+        done++;
+        note.innerHTML = noteHTML(`已完成 ${done}/${names.length}：${n}`, "info");
+      } catch (e) {
+        note.innerHTML = noteHTML(`${n} 失败：${e.message}`, "error");
+        break;
+      }
+    }
+    if (done) { toast(`已生成 ${done} 个音色基因`, "ok"); await refreshVoices(); }
+  });
+}
+
+function initLibrary() {
+  $("#l-new").addEventListener("click", openNewVoiceDialog);
+  initLibrarySearch();
+  renderLibrary();
+}
+
+function openNewVoiceDialog() {
+  const m = openModal({
+    title: "新增音色",
+    body: `
+      <div class="field">
+        <label for="nv-name">音色名</label>
+        <input class="input" id="nv-name" placeholder="例如：御姐 / 韩立 / 旁白-男">
+      </div>
+      <input type="file" id="nv-file" class="hidden" accept="audio/*">
+      <div class="mt">
+        <button class="drop" id="nv-drop">
+          <span class="drop__ic">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 16V4M7 9l5-5 5 5M4 17v2a1 1 0 001 1h14a1 1 0 001-1v-2"/></svg>
+          </span>
+          <span class="drop__t" id="nv-drop-t"></span>
+        </button>
+      </div>
+      <div class="field mt">
+        <label for="nv-url">或者：粘贴音频直链</label>
+        <div class="row-fill">
+          <input class="input" id="nv-url" placeholder="https://…/ref.mp3" autocomplete="off">
+          <button class="btn btn--outline" id="nv-url-go">拉取</button>
+        </div>
+        <p class="hint">浏览器传不了「网上的音频」，但链接可以。只支持 http / https 直链，
+          上限 ${BOOT.limits?.url_max_mb ?? 64} MB；拉下来和本地文件走同一条路，能裁剪、能转写。</p>
+      </div>
+      <div id="nv-editor" class="mt"></div>
+      <div class="field mt">
+        <div class="row-between">
+          <label for="nv-text">参考文本 <span class="lbl-opt">（仅说话人向量模式可留空）</span></label>
+          <span id="nv-asr-slot"></span>
+        </div>
+        <textarea class="textarea textarea--slim" id="nv-text" rows="2"
+          placeholder="逐字照抄参考音频里说的话"></textarea>
+      </div>
+      <div class="switchrow mt">
+        <input type="checkbox" id="nv-xvec" checked>
+        <label class="switchrow__t" for="nv-xvec" style="cursor:pointer">
+          <b>只用说话人向量</b>
+          <span>只取音色不学语调，切语种更干净；关掉走完整 ICL，更贴参考韵律但必须填准参考文本。</span>
+        </label>
+      </div>`,
+    foot: `<button class="btn btn--ghost" data-role="no">取消</button>
+           <button class="btn btn--primary" data-role="yes" disabled>保存音色</button>`,
+  });
+
+  let up = null;
+  const yes = m.$('[data-role=yes]');
+  // 不给 saveLabel：这个弹窗的「保存音色」就是唯一入口，编辑器里再挂一个
+  // 「用这段保存」只是把同一个动作说两遍。保存时取的就是**当前选区**
+  // （见下面 yes 的点击处理读 ed.selection），所以两者本来就等价。
+  let nvAuto = null;            // 真正的自动转写器在下面挂完按钮才建，这里只留个引用
+  const ed = createEditor(m.$("#nv-editor"), { onRange: () => { if (up) nvAuto?.poke(); } });
+
+  const IDLE = `<b>选择或拖入参考音频</b>
+    <span>建议 ${BOOT.limits?.ref_min_secs ?? 2}–${BOOT.limits?.ref_good_max_secs ?? 12} 秒干净人声，
+    也可以填下面的链接</span>`;
+  const showIdle = () => {
+    m.$("#nv-drop-t").innerHTML = IDLE;
+    m.$("#nv-drop").classList.remove("has");
+  };
+  showIdle();
+
+  /* 两条来源（本地文件 / 链接）的「接收」只有这一处：
+     /api/upload/url 回来的字段和 /api/upload 一模一样，所以下游一行都不用分叉。 */
+  function adopt(info) {
+    m.$("#nv-drop-t").innerHTML = `<b>${esc(info.original || info.name)}</b>
+      <span>${fmtDur(info.duration)} · 可在下方拖选取片段${info.source ? " · 来自链接" : ""}</span>`;
+    m.$("#nv-drop").classList.add("has");
+    ed.load(info.url, info.original || info.name);
+    yes.disabled = false;
+    const base = (info.original || "音色").replace(/\.[^.]+$/, "");
+    if (!m.$("#nv-name").value) m.$("#nv-name").value = base;
+  }
+
+  const pick = () => m.$("#nv-file").click();
+  m.$("#nv-drop").addEventListener("click", pick);
+  m.$("#nv-drop").addEventListener("dragover", (e) => { e.preventDefault(); m.$("#nv-drop").classList.add("over"); });
+  m.$("#nv-drop").addEventListener("dragleave", () => m.$("#nv-drop").classList.remove("over"));
+  m.$("#nv-drop").addEventListener("drop", (e) => {
+    e.preventDefault(); m.$("#nv-drop").classList.remove("over");
+    const f = e.dataTransfer.files?.[0];
+    if (f) upload(f);
+  });
+  m.$("#nv-file").addEventListener("change", () => {
+    const f = m.$("#nv-file").files?.[0];
+    if (f) upload(f);
+  });
+
+  async function upload(file) {
+    const fd = new FormData();
+    fd.append("file", file, file.name);
+    m.$("#nv-drop-t").innerHTML = `<b>正在上传…</b><span>${esc(file.name)}</span>`;
+    try {
+      up = await api("/api/upload", { method: "POST", body: fd });
+      adopt(up);
+    } catch (e) { showIdle(); toast(e.message, "err"); }
+  }
+
+  const urlIn = m.$("#nv-url"), urlGo = m.$("#nv-url-go");
+
+  async function pull() {
+    const url = urlIn.value.trim();
+    if (!url) { toast("先粘贴一个音频链接", "warn"); urlIn.focus(); return; }
+    urlGo.disabled = true;
+    const old = urlGo.textContent;
+    urlGo.textContent = "拉取中…";
+    m.$("#nv-drop-t").innerHTML = `<b>正在从链接拉取…</b><span>${esc(url)}</span>`;
+    try {
+      up = await post("/api/upload/url", { url });
+      adopt(up);
+      toast("参考音频已就绪", "ok");
+    } catch (e) {
+      // 失败时把拖放区放回初始态 —— 否则上面还挂着一条「正在拉取…」
+      if (!up) showIdle();
+      toast(e.message, "err");
+    } finally { urlGo.disabled = false; urlGo.textContent = old; }
+  }
+
+  urlGo.addEventListener("click", pull);
+  urlIn.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); pull(); }
+  });
+
+  yes.addEventListener("click", async () => {
+    const name = m.$("#nv-name").value.trim();
+    if (!name) { toast("请填音色名", "warn"); return; }
+    if (!up) { toast("请先上传参考音频", "warn"); return; }
+    const sel = ed.selection;
+    yes.disabled = true;
+    try {
+      const r = await postVoice({
+        name, upload: up.name,
+        ref_text: m.$("#nv-text").value.trim(),
+        xvec_only: m.$("#nv-xvec").checked,
+        start: sel.start, end: sel.end,
+      });
+      m.close();
+      toast(r.replaced ? `已覆盖音色「${r.name}」` : `已保存音色「${r.name}」`, "ok");
+      await refreshVoices();
+      followGeneJob(r.job, null);
+    } catch (e) { toast(e.message, "err"); yes.disabled = false; }
+  });
+  m.$('[data-role=no]').addEventListener("click", () => m.close());
+  // 转写选区而非整段 —— 与「保存音色」用的是同一段音频
+  const nvText = m.$("#nv-text");
+  const nvPayload = () => {
+    const sel = ed.selection;
+    return { upload: up.name, start: sel.start, end: sel.end };
+  };
+  const nvBtn = mountTranscribe("#nv-asr-slot", (btn) => {
+    if (!up) { toast("先选择或拖入参考音频", "warn"); return; }
+    doTranscribe(btn, nvPayload(), nvText, null);
+  });
+  // 音频一就绪就自动填好，之后拖选区也跟着重转 —— 不用再点那个按钮
+  nvAuto = autoTranscribe(nvBtn, nvText, nvPayload);
+  setTimeout(() => m.$("#nv-name").focus(), 60);
+}
+
+/* ============================================================================
+   15. 视图：合成记录
+   ============================================================================ */
+let _lastHistory = [];
+
+async function refreshHistory() {
+  if (!document.getElementById("h-host")) return;
+  try {
+    const r = await api("/api/history");
+    _lastHistory = r.history || [];
+    HISTORY_DIRTY = false;
+    renderHistory();
+  } catch (e) {
+    $("#h-host").innerHTML = noteHTML(e.message, "error");
+  }
+}
+
+/* 列表里只渲染正文的前一段。反正显示上被 `-webkit-line-clamp:2` 截成两行，
+   把 300 条记录的全文字都塞进 DOM 只是白白占内存（一条 2000 字就是几十万字）。
+   取 600 字：够在任何常见窗宽下把两行撑满 —— **悬停浮层用的仍是 it.text 全文**，
+   不走这里。截太短的话宽窗口下两行都填不满，浮层反而不会被挂上。
+   字数（`chars`）存的是真实长度，跟这个截断无关。 */
+const HIST_TEXT_IN_ROW = 600;
+
+function histTextPreview(t) {
+  const s = t || "";
+  return s.length > HIST_TEXT_IN_ROW ? s.slice(0, HIST_TEXT_IN_ROW) + "…" : s;
+}
+
+function histParamsInline(it) {
+  const pairs = paramPairs(it).filter(([k]) => k !== "音色" && k !== "说话人" && k !== "模式");
+  if (!pairs.length) return "";
+  return `<div class="hrow__params">`
+    + pairs.map(([k, v]) => `<span><i>${esc(k)}</i><b>${esc(v)}</b></span>`).join("") + `</div>`;
+}
+
+function renderHistory() {
+  const host = $("#h-host");
+  const items = _lastHistory;
+  // 同 renderLibrary：列表整片重建，开着试听的槽位要先自己停声
+  $$('[data-role=slot]', host).forEach((s) => { try { s._stopAudio?.(); } catch (_) {} });
+  hideTip();
+  if (!items.length) {
+    host.innerHTML = `<div class="card"><div class="empty">
+      <b>还没有合成记录</b>去「语音克隆」或「声音设计」生成第一段语音吧。</div></div>`;
+    return;
+  }
+  // 按天分组：同一天的排在同一个标题下，长列表才好扫
+  const groups = new Map();
+  items.forEach((it) => {
+    const day = (it.ts || "").slice(0, 10) || "未知日期";
+    if (!groups.has(day)) groups.set(day, []);
+    groups.get(day).push(it);
+  });
+
+  host.innerHTML = `<div class="hlist">` + [...groups.entries()].map(([day, list]) => `
+    <div>
+      <div class="hgroup__t">${esc(day)}<span class="sp"></span>${list.length} 条</div>
+      <div class="hrows">${list.map(histRowHTML).join("")}</div>
+    </div>`).join("") + `</div>`;
+
+  $$(".hrow", host).forEach((row) => {
+    const id = row.dataset.id;
+    const it = items.find((x) => x.id === id);
+    const slot = $('[data-role=slot]', row);
+    // 正文在这里被截成两行；**真的截到了才挂浮层** ——
+    // 一行就放得下的短句再弹一遍原文，只是噪音。
+    const txt = $(".hrow__text", row);
+    if (txt && txt.scrollHeight > txt.clientHeight + 1) {
+      txt.addEventListener("mouseenter", () => showTip(it.text || "", txt));
+      txt.addEventListener("mouseleave", hideTipSoon);
+    }
+    const play = $('[data-role=play]', row);
+    if (play) play.addEventListener("click", () => {
+      if (slot.dataset.open === "1") { closeSlot(slot); return; }
+      openPlayer(slot, "/media/out/" + encodeURIComponent(it.file), it.file);
+    });
+    $('[data-role=copy]', row)?.addEventListener("click", async (e) => {
+      try {
+        await navigator.clipboard.writeText(it.text || "");
+        toast("参数已复制（只是文本，重跑请到对应页填回）", "ok");
+      } catch (_) { toast("复制失败，浏览器拒绝了剪贴板访问", "err"); }
+    });
+    $('[data-role=del]', row).addEventListener("click", async () => {
+      try {
+        await post("/api/history/delete", { ids: [id] });
+        toast("已删除这条记录（音频文件仍在 outputs/）", "ok");
+        await refreshHistory();
+      } catch (e) { toast(e.message, "err"); }
+    });
+  });
+}
+
+function histRowHTML(it) {
+  const mode = MODE_LABEL[it.mode] || it.mode || "—";
+  const gone = !it.file_exists;
+  const err = it.status === "error";
+  const who = it.mode === "official" ? speakerLabel(it.speaker)
+    : it.mode === "design" ? "声音设计"
+    : (it.voice || "—");
+  return `<div class="hrow${err ? " err" : ""}${gone && it.file ? " gone" : ""}" data-id="${esc(it.id)}">
+    <div class="hrow__top">
+      <span class="pill pill--accent">${esc(mode)}</span>
+      <span class="hrow__voice">${esc(who)}</span>
+      ${it.instruct ? `<span class="hrow__instr">· ${esc(it.instruct.slice(0, 40))}${it.instruct.length > 40 ? "…" : ""}</span>` : ""}
+      <span class="hrow__time">${esc(it.ts || "")}</span>
+    </div>
+    <div class="hrow__meta">
+      <span>${esc(sizeLabel(it.size))}</span>
+      <span>${esc(it.language || "Auto")}</span>
+      <span>${it.duration ? fmtDur(it.duration) : "—"}</span>
+      <span>${it.chars || 0} 字</span>
+      ${err ? `<span style="color:var(--err);font-weight:600">生成失败</span>`
+            : gone ? `<span style="color:var(--warn)">音频已被清理</span>` : ""}
+    </div>
+    ${histParamsInline(it)}
+    <p class="hrow__text">${esc(histTextPreview(it.text))}</p>
+    <div class="hrow__acts">
+      ${it.file_exists ? `<button class="btn btn--outline btn--sm" data-role="play">试听</button>` : ""}
+      <button class="btn btn--ghost btn--sm" data-role="copy">复制文本参数</button>
+      <button class="btn btn--ghost btn--sm" data-role="del">删除记录</button>
+    </div>
+    <div class="hrow__slot" data-role="slot"></div>
+  </div>`;
+}
+
+function initHistory() {
+  $("#h-refresh").addEventListener("click", refreshHistory);
+  $("#h-clear").addEventListener("click", () => {
+    const m = openModal({
+      title: "清空全部记录",
+      body: `<p class="apidesc">只清空记录列表，<b>不会删除 outputs/ 里的音频文件</b>。</p>`,
+      foot: `<button class="btn btn--ghost" data-role="no">取消</button>
+             <button class="btn btn--danger-solid" data-role="yes">确认清空</button>`,
+    });
+    m.$('[data-role=yes]').addEventListener("click", async () => {
+      try {
+        const r = await post("/api/history/clear");
+        m.close();
+        toast(`已清空 ${r.removed} 条`, "ok");
+        await refreshHistory();
+      } catch (e) { toast(e.message, "err"); }
+    });
+    m.$('[data-role=no]').addEventListener("click", () => m.close());
+  });
+  refreshHistory();
+}
+
+/* ============================================================================
+   16. 视图：API 对接
+   ============================================================================ */
+function mBadge(method) {
+  const m = (method || "GET").toUpperCase();
+  return `<span class="m m--${m === "GET" ? "get" : "post"}">${esc(m)}</span>`;
+}
+
+function paramsTable(params) {
+  if (!params || !params.length) return "";
+  return `<table class="ptbl"><thead><tr><th>参数</th><th>类型</th><th>说明</th></tr></thead><tbody>`
+    + params.map(([n, t, d2]) =>
+      `<tr><td class="pn">${esc(n)}</td><td class="pt">${esc(t)}</td><td>${esc(d2)}</td></tr>`).join("")
+    + `</tbody></table>`;
+}
+
+function codeBlock(code) {
+  return `<div class="codeblk"><pre>${esc(code)}</pre>
+    <button class="btn btn--outline btn--sm copy" data-role="copy">复制</button></div>`;
+}
+
+function endpointHTML(ep) {
+  return `<details class="ep">
+    <summary><span class="ep__row">${mBadge(ep.method)}
+      <span class="ep__path">${esc(ep.path)}</span>
+      <span class="ep__title">${esc((ep.desc || "").slice(0, 34))}</span></span></summary>
+    <div class="ep__body">
+      <p class="apidesc">${esc(ep.desc || "")}</p>
+      ${paramsTable(ep.params)}
+    </div>
+  </details>`;
+}
+
+function renderApiPage(spec) {
+  const audit = spec.audit || {};
+  const host = $("#a-host");
+  const auditNote = audit.consistent
+    ? noteHTML(`接口清单与真实路由完全一致（${audit.declared} 条）。`, "ok")
+    : noteHTML(`发现不一致：\n`
+        + (audit.undeclared?.length ? `有路由但文档没写：${audit.undeclared.join("、")}\n` : "")
+        + (audit.missing?.length ? `文档写了但路由不存在：${audit.missing.join("、")}` : ""), "warn");
+
+  const groups = (spec.groups || []).map((g) => `
+    <div class="card">
+      <div class="gsec"><h3>${esc(g.name)}</h3><p>${g.items.length} 个接口</p></div>
+      ${g.items.map(endpointHTML).join("")}
+    </div>`).join("");
+
+  const examples = (spec.examples || []).map((ex) => `
+    <div class="card">
+      <div class="card__head"><h2>${esc(ex.title)}</h2>
+        <span class="pill sp">${esc(ex.lang)}</span></div>
+      <div class="card__body">${codeBlock(ex.code)}</div>
+    </div>`).join("");
+
+  host.innerHTML = `
+    <div class="card">
+      <div class="card__head"><h2>对账结果</h2>
+        <span class="pill ${audit.consistent ? "pill--ok" : "pill--warn"} sp">
+          ${audit.declared || 0} 声明 / ${audit.real || 0} 实际</span></div>
+      <div class="card__body">${auditNote}
+        <p class="hint mt">这份清单的内容来自服务端 web/api_docs.py，并逐条与 FastAPI 上真实注册的路由核对 ——
+          改了路由忘了改文档，这里会立刻显示出来。</p>
+      </div>
+    </div>
+    <h2 style="margin:26px 0 12px;font-size:15px">调用流程</h2>
+    <div class="card"><div class="card__body">
+      <p class="apidesc">生成是重活，所有模式都走同一条异步通路：</p>
+      <table class="ptbl"><tbody>
+        <tr><td class="pn">1</td><td>POST <span class="mono">/api/jobs</span></td><td>带上 mode / text / 参数，立即拿到 job id</td></tr>
+        <tr><td class="pn">2</td><td>GET <span class="mono">/api/jobs/&lt;id&gt;</span></td><td>轮询 state：queued → running → done / error</td></tr>
+        <tr><td class="pn">3</td><td>GET <span class="mono">/api/jobs/&lt;id&gt;</span></td><td>done 后 result.url 就是音频地址</td></tr>
+      </tbody></table>
+    </div></div>
+    <h2 style="margin:26px 0 12px;font-size:15px">示例</h2>
+    <div class="stack">${examples}</div>
+    <h2 style="margin:26px 0 12px;font-size:15px">接口清单</h2>
+    <div class="stack">${groups}</div>`;
+
+  $$('[data-role=copy]', host).forEach((btn) => btn.addEventListener("click", async () => {
+    const pre = btn.parentElement.querySelector("pre");
+    try {
+      await navigator.clipboard.writeText(pre.textContent);
+      btn.textContent = "已复制";
+      setTimeout(() => { btn.textContent = "复制"; }, 1600);
+    } catch (_) { toast("复制失败，请手动选中", "err"); }
+  }));
+}
+
+async function loadApiDocs(force) {
+  if (DOCS && !force) { renderApiPage(DOCS); return; }
+  $("#a-host").innerHTML = `<div class="skeleton"></div>`;
+  try {
+    DOCS = await api("/api/docs");
+    renderApiPage(DOCS);
+  } catch (e) { $("#a-host").innerHTML = noteHTML(e.message, "error"); }
+}
+
+/* ============================================================================
+   17. 导航与环境抽屉
+   ============================================================================ */
+const VIEWS = ["clone", "design", "official", "script", "library", "history", "api"];
+const LOADED = new Set();
+
+function gotoView(name) {
+  if (!VIEWS.includes(name)) name = "clone";
+  // 试听的声音不能跟着进别的视图：播放器宿主留在官方页里，那边已经没地方按暂停了
+  if (name !== "official") closeSlot($("#o-try"));
+  hideTip();   // 浮层挂在 body 上，不跟着视图走，切页时得自己收
+  VIEWS.forEach((v) => {
+    $(`#view-${v}`).classList.toggle("hidden", v !== name);
+  });
+  $$("#nav .navitem").forEach((b) => b.setAttribute("aria-current", b.dataset.view === name ? "page" : "false"));
+  location.hash = name;
+  if (!LOADED.has(name)) {
+    LOADED.add(name);
+    if (name === "history") initHistory();
+    else if (name === "api") loadApiDocs();
+  }
+  if (name === "history" && HISTORY_DIRTY) refreshHistory();
+  if (name === "library") renderLibrary();
+  // 高亮层的宽高是量出来的，而视图藏起来时量到的是 0。
+  // 切回来必须重新量一次，否则那一层会停在 0 宽（颜色整个看不见）。
+  if (name === "script") syncScriptHighlight();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+// 早先只读一次 location.hash（启动时），没人监听它的变化 ——
+// 于是浏览器后退/前进、或直接粘贴一个带 #library 的地址，视图都不会跟着切。
+// 这里补上。gotoView 自己也会写 hash，所以要在「目标视图已经可见」时提前返回，
+// 否则会绕回来递归（gotoView 是先切视图、后写 hash，故这个判断一定成立）。
+window.addEventListener("hashchange", () => {
+  const want = (location.hash || "").replace("#", "") || "clone";
+  if (!VIEWS.includes(want)) return;
+  const el = $(`#view-${want}`);
+  if (el && !el.classList.contains("hidden")) return;
+  gotoView(want);
+});
+
+function openEnv(on) {
+  $("#drawer").classList.toggle("on", on);
+  $("#scrim").classList.toggle("on", on);
+  $("#drawer").setAttribute("aria-hidden", on ? "false" : "true");
+}
+
+function renderEnv() {
+  const h = BOOT.hardware || {};
+  const p = h.rows || [];
+  $("#env-main").textContent = h.is_gpu ? "GPU 加速" : "CPU 推理";
+  $("#env-sub").textContent = h.is_gpu
+    ? `${(h.device_name || "").slice(0, 22)} · ${h.vram_gib ? h.vram_gib.toFixed(1) + " GiB" : "—"}`
+    : "CPU · 会比较慢";
+  $("#env-dot").className = "dot" + (h.is_gpu ? "" : " cpu");
+  $("#env-table").innerHTML = p.map((r) =>
+    `<tr><th>${esc(r.k)}</th><td>${esc(r.v)}</td></tr>`).join("");
+
+  const notes = BOOT.hardware?.notes || [];
+  $("#env-notes").innerHTML = notes.length
+    ? notes.map((n) => noteHTML(n, "info")).join("")
+    : noteHTML("没有需要特别说明的适配项。", "ok");
+
+  const missing = BOOT.models?.missing || [];
+  $("#env-models").innerHTML = missing.length
+    ? noteHTML("缺少以下权重目录，相关模式不可用：\n" + missing.join("\n"), "error")
+    : noteHTML(`5 套权重全部就位（${Object.keys(BOOT.models?.map || {}).length} 项映射）。`, "ok");
+
+  const asr = BOOT.asr || {};
+  $("#env-notes").innerHTML += noteHTML(
+    asr.available ? "参考音频自动转写：可用。" : `参考音频自动转写：不可用 —— ${asr.reason || "未启用"}`,
+    asr.available ? "ok" : "info");
+
+  $("#env-sub").title = h.short || "";
+}
+
+/* ============================================================================
+   18. 启动
+   ============================================================================ */
+async function boot() {
+  try {
+    BOOT = await api("/api/bootstrap");
+  } catch (e) {
+    $("#boot").innerHTML = `<b>启动失败</b><br>${esc(e.message)}<br>
+      <span style="font-size:12px">请确认后端已启动（run_web.bat），再刷新本页。</span>`;
+    return;
+  }
+  syncVoiceCache();
+  $("#brand-sub").textContent = `Studio · ${BOOT.hardware?.is_gpu ? "GPU" : "CPU"}`;
+
+  $$("#nav .navitem").forEach((b) => b.addEventListener("click", () => gotoView(b.dataset.view)));
+  $$("[data-goto]").forEach((b) => b.addEventListener("click", () => gotoView(b.dataset.goto)));
+  $("#env-btn").addEventListener("click", () => openEnv(true));
+  $("#drawer-close").addEventListener("click", () => openEnv(false));
+  $("#scrim").addEventListener("click", () => openEnv(false));
+  $("#a-reload").addEventListener("click", () => loadApiDocs(true));
+
+  initClone();
+  initDesign();
+  initOfficial();
+  initScript();
+  initLibrary();
+  renderEnv();
+  $("#c-max").textContent = String(BOOT.limits?.max_text_chars ?? 2000);
+
+  $("#boot").classList.add("hidden");
+  $("#app").classList.remove("hidden");
+
+  const start = (location.hash || "").replace("#", "");
+  gotoView(VIEWS.includes(start) ? start : "clone");
+
+  if (BOOT.models && BOOT.models.missing?.length) {
+    toast(`缺少 ${BOOT.models.missing.length} 套权重，部分模式不可用`, "warn");
+  } else {
+    toast("工作台就绪", "ok");
+  }
+}
+
+if (document.readyState === "loading") addEventListener("DOMContentLoaded", boot);
+else boot();
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,657 @@
+"""Qwen3-TTS Studio — 生成核心（**不含任何界面代码**）。
+
+职责边界：
+    · ``config.py``      —— 路径与「用户想强制什么」
+    · ``hardware.py``    —— 探测本机 + 自动决出档位（Profile）
+    · **本文件**         —— 照 Profile 干活：模型调度 + 四个功能的生成 + 错误话术
+    · ``web/server.py``  —— 只调用本文件的模块级函数，不重复实现生成逻辑
+
+模型调度是本文件与单模型项目最大的不同：Qwen3-TTS 有 5 套权重
+（design 1.7B / clone 1.7B·0.6B / official 1.7B·0.6B），
+显存装不下两套，因此切换功能时必须**先卸载再加载**。
+:class:`ModelManager` 把这套逻辑收敛成 ``ensure(kind, size)`` 一个入口。
+
+音频长度单位为秒；所有生成入口统一返回 ``(waveform, sample_rate, status, level)``，
+``status`` 是给用户看的一句话，``level`` 取 ``ok`` / ``warn`` / ``error``。
+"""
+
+from __future__ import annotations
+
+import gc
+import threading
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Optional
+
+import numpy as np
+import soundfile as sf
+import torch
+
+import config as cfg
+import voices as voices_mod
+
+# ---------------------------------------------------------------------------
+# 全局锁
+# ---------------------------------------------------------------------------
+# 模型加载/卸载与生成都碰 GPU，必须串行；否则两个请求同时进来会
+# 一个在卸模型、一个在生成，直接崩。
+_GPU_LOCK = threading.RLock()
+
+# transformers 的 from_pretrained 只在首次加载模型时打一次补丁
+_PATCHED = False
+
+
+def _patch_transformers() -> None:
+    """强制本地加载 + sdpa 注意力。
+
+    为什么必须打这个补丁（原项目踩过的坑）：
+      1. 0.6B 权重的 config 里写了 flash_attention_2，但本机没装 flash-attn，
+         加载时直接抛异常；换成 sdpa 走 PyTorch 原生实现即可。
+      2. 离线环境下必须显式 local_files_only，否则 transformers 会尝试联网
+         解析 revision，超时后报一个与真实原因无关的错。
+    """
+    global _PATCHED
+    if _PATCHED:
+        return
+    try:
+        from transformers import PretrainedConfig, PreTrainedModel
+
+        _orig_model = PreTrainedModel.from_pretrained
+        _orig_config = PretrainedConfig.from_pretrained
+
+        def _patched(cls, *args, **kwargs):
+            kwargs["local_files_only"] = True
+            kwargs["attn_implementation"] = "sdpa"
+            return _orig_model.__func__(cls, *args, **kwargs)
+
+        def _patched_cfg(cls, *args, **kwargs):
+            kwargs["local_files_only"] = True
+            return _orig_config.__func__(cls, *args, **kwargs)
+
+        PreTrainedModel.from_pretrained = classmethod(_patched)
+        PretrainedConfig.from_pretrained = classmethod(_patched_cfg)
+    except Exception:  # noqa: BLE001  打不上补丁也不该让整个程序起不来
+        pass
+    _PATCHED = True
+
+
+def _patch_torch_load() -> None:
+    """允许 torch.load 反序列化音色基因文件（.pt）。
+
+    PyTorch 2.6 起 torch.load 默认 weights_only=True，而音色基因里存的是
+    自定义 dataclass ``VoiceClonePromptItem``，不注册就会报 UnpicklingError。
+    """
+    try:
+        from qwen_tts.inference.qwen3_tts_model import VoiceClonePromptItem
+
+        torch.serialization.add_safe_globals([VoiceClonePromptItem])
+    except Exception:  # noqa: BLE001
+        pass
+
+
+# ---------------------------------------------------------------------------
+# 模型调度
+# ---------------------------------------------------------------------------
+class ModelManager:
+    """管理 5 套权重的加载 / 复用 / 卸载。
+
+    缓存策略：只保留**一套**当前模型。同 kind+size 重复请求直接复用；
+    不同则先彻底卸载旧的（含 empty_cache）再加载新的。
+    这是 6 GiB 显存能跑 1.7B 的前提 —— 两套并存必然 OOM。
+    """
+
+    def __init__(self) -> None:
+        self._model = None
+        self._key: Optional[tuple[str, str]] = None
+        self._loading: Optional[tuple[str, str]] = None
+
+    # -- 查询 ---------------------------------------------------------------
+    @property
+    def loaded_key(self) -> Optional[tuple[str, str]]:
+        return self._key
+
+    def status(self) -> dict:
+        return {
+            "loaded": None if self._key is None else {"kind": self._key[0], "size": self._key[1]},
+            "loading": None if self._loading is None else {"kind": self._loading[0], "size": self._loading[1]},
+            "vram_allocated_gib": _vram_gib(),
+        }
+
+    # -- 卸载 ---------------------------------------------------------------
+    def _unload_locked(self) -> None:
+        if self._model is None:
+            return
+        del self._model
+        self._model = None
+        self._key = None
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+
+    def unload(self) -> None:
+        with _GPU_LOCK:
+            self._unload_locked()
+
+    # -- 加载 ---------------------------------------------------------------
+    def ensure(self, kind: str, size: str):
+        """确保 (kind, size) 对应的模型就绪并返回它。"""
+        key = (kind, size)
+        with _GPU_LOCK:
+            if self._model is not None and self._key == key:
+                return self._model
+
+            path = cfg.model_path(kind, size)
+            sub = cfg.MODEL_DIRS.get(key)
+            if sub is None:
+                raise RuntimeError(f"未知的功能/规格组合：{kind} / {size}")
+            if path is None:
+                raise RuntimeError(
+                    f"找不到权重目录 models/{sub}/。请确认模型已随包分发到位。"
+                )
+
+            self._unload_locked()
+            self._loading = key
+            try:
+                _patch_transformers()
+                _patch_torch_load()
+                from faster_qwen3_tts import FasterQwen3TTS
+
+                prof = cfg.profile()
+                print(f"[模型] 加载 {sub} → {prof.device} / {prof.dtype} …", flush=True)
+                t0 = time.time()
+                model = FasterQwen3TTS.from_pretrained(
+                    str(path).replace("\\", "/"),
+                    device=prof.device,
+                    dtype=prof.torch_dtype,
+                )
+                self._model = model
+                self._key = key
+                print(f"[模型] 就绪，用时 {time.time() - t0:.1f}s", flush=True)
+                return model
+            finally:
+                self._loading = None
+
+
+_MGR = ModelManager()
+
+
+def load_model(kind: str, size: str):
+    """供外部（server / script）使用的加载入口。"""
+    return _MGR.ensure(kind, size)
+
+
+def unload_model() -> None:
+    _MGR.unload()
+
+
+def model_status() -> dict:
+    return _MGR.status()
+
+
+def _vram_gib() -> float:
+    try:
+        if torch.cuda.is_available():
+            return round(torch.cuda.memory_allocated() / 1024**3, 2)
+    except Exception:  # noqa: BLE001
+        pass
+    return 0.0
+
+
+# ---------------------------------------------------------------------------
+# 错误识别与话术
+# ---------------------------------------------------------------------------
+_OOM_PATTERNS = (
+    "out of memory", "cuda out of memory", "cublas", "cuda error",
+    "insufficient memory", "alloc", "nvml",
+)
+
+
+def _is_oom(e: BaseException) -> bool:
+    s = f"{type(e).__name__}: {e}".lower()
+    return any(p in s for p in _OOM_PATTERNS)
+
+
+def _friendly_error(e: BaseException) -> str:
+    """把底层异常翻译成人能看懂、且能指导下一步动作的话。"""
+    s = str(e)
+    if _is_oom(e):
+        return (
+            "显存不足。已尝试自动降级；若仍失败，请：\n"
+            "· 把规格切到 0.6B；\n"
+            "· 缩短单次文本（长文请用剧本工坊分段）；\n"
+            "· 关闭其他占用显卡的程序后重试。"
+        )
+    if "找不到权重" in s or "No such file" in s or "not found" in s.lower():
+        return f"权重或文件缺失：{s}"
+    if "flash" in s.lower() and "attn" in s.lower():
+        return "注意力实现不兼容（可能未打 sdpa 补丁）：" + s
+    return s
+
+
+# ---------------------------------------------------------------------------
+# 文本切分（长文本 / 长台词）
+# ---------------------------------------------------------------------------
+_SENT_END = "。！？!?；;\n"
+
+
+def split_text(text: str, max_chars: int) -> list[str]:
+    """按标点把长文本切成不超过 max_chars 的片段。
+
+    Qwen3-TTS 单次生成受 max_new_tokens=2048 限制（12Hz 下约 170 秒音频），
+    过长会截断或失控，因此送入前先切。切点优先落在句末标点上，
+    避免在词中间断开发音。
+    """
+    text = (text or "").strip()
+    if not text:
+        return []
+    if len(text) <= max_chars:
+        return [text]
+
+    out: list[str] = []
+    buf = ""
+    for ch in text:
+        buf += ch
+        if ch in _SENT_END and len(buf) >= max_chars * 0.6:
+            out.append(buf.strip())
+            buf = ""
+        elif len(buf) >= max_chars:
+            # 一直没遇到句末标点，被迫硬切；回退到最近的逗号，再不行直接切
+            cut = max(buf.rfind("，"), buf.rfind(","), buf.rfind("、"))
+            if cut >= max_chars * 0.5:
+                out.append(buf[: cut + 1].strip())
+                buf = buf[cut + 1:]
+            else:
+                out.append(buf.strip())
+                buf = ""
+    if buf.strip():
+        out.append(buf.strip())
+    return [s for s in out if s]
+
+
+def _join_segments(segs: list[tuple[np.ndarray, int]], gap_secs: float) -> tuple[np.ndarray, int]:
+    """把多段音频拼接成一段，段间插入静音。"""
+    if not segs:
+        raise RuntimeError("没有可拼接的音频片段。")
+    sr = segs[0][1]
+    gap = np.zeros(int(sr * gap_secs), dtype=np.float32) if gap_secs > 0 else None
+    parts: list[np.ndarray] = []
+    for i, (wav, _sr) in enumerate(segs):
+        if i and gap is not None:
+            parts.append(gap)
+        parts.append(np.asarray(wav, dtype=np.float32))
+    return np.concatenate(parts), sr
+
+
+# ---------------------------------------------------------------------------
+# 保存
+# ---------------------------------------------------------------------------
+def save_wav(wav: np.ndarray, sr: int, tag: str) -> str:
+    """写入 outputs/，返回文件名（不含目录）。"""
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    name = f"{tag}_{stamp}.wav"
+    path = cfg.OUTPUT_DIR / name
+    n = 1
+    while path.exists():  # 同一秒内多次生成也不会互相覆盖
+        name = f"{tag}_{stamp}_{n}.wav"
+        path = cfg.OUTPUT_DIR / name
+        n += 1
+    sf.write(str(path), np.asarray(wav, dtype=np.float32), sr)
+    return name
+
+
+def audio_duration(path: str | Path) -> float:
+    try:
+        info = sf.info(str(path))
+        return round(info.frames / info.samplerate, 2)
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
+def _status_line(wav: np.ndarray, sr: int, t_cost: float, extra: str = "") -> str:
+    dur = len(wav) / sr if sr else 0.0
+    rtf = (t_cost / dur) if dur else 0.0
+    head = f"音频 {dur:.1f}s，耗时 {t_cost:.1f}s，RTF {rtf:.2f}"
+    return f"{head}\n{extra}" if extra else head
+
+
+# ---------------------------------------------------------------------------
+# 四个生成入口
+# ---------------------------------------------------------------------------
+def _gen_clone(
+    text: str,
+    language: str,
+    ref_audio: str | Path,
+    ref_text: str,
+    instruct: str | None,
+    size: str,
+    xvec_only: bool,
+    warm_prompt: Any = None,
+) -> tuple[np.ndarray, int]:
+    model = load_model("clone", size)
+    if warm_prompt is not None:
+        _prime_prompt_cache(model, ref_audio, ref_text, xvec_only, warm_prompt)
+    wavs, sr = model.generate_voice_clone(
+        text=text,
+        language=language,
+        ref_audio=str(ref_audio),
+        ref_text=ref_text or "",
+        instruct=(instruct or None),
+        xvec_only=bool(xvec_only),
+    )
+    return np.asarray(wavs[0], dtype=np.float32), int(sr)
+
+
+def _prime_prompt_cache(
+    model, ref_audio: str | Path, ref_text: str, xvec_only: bool, payload: dict
+) -> None:
+    """把音色基因（.pt）预热进内核的 voice prompt 缓存。
+
+    这是「音色固化」真正生效的地方 —— 原项目把 .pt 写出来却从没读回去过，
+    于是每次生成都要重新编码一遍参考音频。这里直接命中内核缓存，
+    省掉重采样 + speaker 编码。
+
+    只处理 ``xvec_only=True``：完整 ICL 模式的缓存项还含一份「参考文本的
+    tokenize 结果」，那份东西重算不过毫秒级，且构造错了反而会让生成出错，
+    不如交给内核自己算。
+
+    代价是依赖内核私有属性 ``_voice_prompt_cache``；因此全程 try/except，
+    任何不匹配都静默退回「从 wav 现场编码」的正常路径，不会让生成失败。
+    """
+    try:
+        if not xvec_only:
+            return
+        cache = getattr(model, "_voice_prompt_cache", None)
+        if cache is None:
+            return
+        items = payload.get("items") or []
+        if not items:
+            return
+        key = (str(ref_audio), ref_text or "", True, True)  # 末位是 append_silence
+        cache[key] = (
+            dict(
+                ref_code=[None],
+                ref_spk_embedding=[items[0]["ref_spk_embedding"]],
+                x_vector_only_mode=[True],
+                icl_mode=[False],
+            ),
+            [None],
+        )
+    except Exception:  # noqa: BLE001  预热失败不影响正确性
+        pass
+
+
+def _gen_design(text: str, language: str, instruct: str) -> tuple[np.ndarray, int]:
+    model = load_model("design", "1.7B")
+    wavs, sr = model.generate_voice_design(
+        text=text,
+        language=language,
+        instruct=instruct or "",
+    )
+    return np.asarray(wavs[0], dtype=np.float32), int(sr)
+
+
+def _gen_official(
+    text: str, language: str, speaker: str, instruct: str | None, size: str
+) -> tuple[np.ndarray, int]:
+    model = load_model("official", size)
+    wavs, sr = model.generate_custom_voice(
+        text=text,
+        language=language,
+        speaker=(speaker or "vivian").lower(),
+        instruct=(instruct or None),
+    )
+    return np.asarray(wavs[0], dtype=np.float32), int(sr)
+
+
+def gen_official_text(
+    text: str, language: str, speaker: str, instruct: str | None, size: str
+) -> tuple[np.ndarray, int, str]:
+    """官方精品：单人或多人对话。
+
+    行首带 ``[角色]``（且角色都是内置说话人之一）时按多人对话逐行生成再拼接；
+    否则整体交给模型一次生成 —— 这样用户直接贴一段带方括号的普通文本
+    也不会被误判成对话。
+    """
+    import script as script_mod  # 延迟导入：纯解析层，无副作用
+
+    lines = script_mod.parse(text)
+    st = script_mod.stats(lines)
+    is_dialog = (
+        st["ok_lines"] > 0
+        and st["bad_lines"] == 0
+        and all((ln["role"] or "").lower() in cfg.SPEAKER_NAMES for ln in lines if ln["ok"])
+    )
+
+    if not is_dialog:
+        wav, sr = _gen_official(text, language, speaker, instruct, size)
+        return wav, sr, ""
+
+    if size == "0.6B":
+        raise RuntimeError(
+            "0.6B 规格的官方精品不支持情感指令（内核会把 instruct 强制置空），"
+            "多人对话会退化成无情绪的朗读。请切到 1.7B，或去掉行首的 [情感指令]。"
+        )
+
+    prof = cfg.profile()
+    segs: list[tuple[np.ndarray, int]] = []
+    for ln in lines:
+        if not ln["ok"]:
+            continue
+        for piece in split_text(ln["content"], prof.script_chunk_chars):
+            wav, sr = _gen_official(piece, language, ln["role"].lower(),
+                                    ln["instruct"] or None, size)
+            segs.append((wav, sr))
+    wav, sr = _join_segments(segs, cfg.SCRIPT_GAP_SECS)
+    return wav, sr, f"多人对话：{st['ok_lines']} 句 / {st['role_count']} 个角色"
+
+
+def gen_script(
+    script_text: str, language: str, size: str
+) -> tuple[np.ndarray, int, str, list[str]]:
+    """剧本工坊：用 voices/ 里已登记的音色逐句合成。
+
+    返回 (wav, sr, extra_note, warnings)。
+    """
+    import script as script_mod
+
+    lines = script_mod.parse(script_text)
+    if not lines:
+        raise RuntimeError("剧本内容为空。")
+
+    known = set(voices_mod.list_voices())
+    warns = script_mod.validate(lines, known)
+    prof = cfg.profile()
+    segs: list[tuple[np.ndarray, int]] = []
+    used: list[str] = []
+
+    for ln in lines:
+        if not ln["ok"] or ln["role"] not in known:
+            continue  # 具体原因已在 warns 里说明
+        v = voices_mod.load_voice(ln["role"])
+        if v is None:
+            continue
+
+        first_piece = True
+        for piece in split_text(ln["content"], prof.script_chunk_chars):
+            wav, sr = _gen_clone(
+                piece,
+                language,
+                v["audio_path"],
+                v.get("ref_text", ""),
+                ln["instruct"] or None,
+                size,
+                v.get("xvec_only", cfg.CLONE_XVEC_ONLY),
+                # 基因只预热一次；同一音色后续片段直接命中内核缓存
+                v.get("prompt") if first_piece else None,
+            )
+            segs.append((wav, sr))
+            first_piece = False
+        used.append(ln["role"])
+
+    if not segs:
+        raise RuntimeError("没有生成任何音频。请检查每行是否都写成 `[角色名] 台词`。")
+
+    wav, sr = _join_segments(segs, cfg.SCRIPT_GAP_SECS)
+    note = f"剧本：{len(segs)} 段 / 角色 {len(set(used))} 个"
+    return wav, sr, note, warns
+
+
+def speaker_preview_path(key: str, size: str) -> Path:
+    """试听样例的落盘位置。规格进文件名 —— 1.7B 和 0.6B 是两把嗓子。"""
+    return cfg.PREVIEW_DIR / f"{key}__{size}.wav"
+
+
+def build_speaker_preview(key: str, size: str) -> Path:
+    """生成（或复用）官方说话人的试听样例。
+
+    生成一次就长期躺在 web/_preview/ 里：试听不该每次都等模型加载（十几到几十秒），
+    但也不该在启动时把 9 个说话人全跑一遍 —— 那要一两分钟，还平白占着显存。
+    """
+    path = speaker_preview_path(key, size)
+    if path.exists():
+        return path
+    lang = cfg.SPEAKER_LANG.get(key)
+    text = cfg.SPEAKER_PREVIEW_TEXT.get(lang) if lang else None
+    if not text:
+        raise RuntimeError(f"没有为说话人 [{key}] 准备试听文本，无法生成。")
+    # 必须和 synthesize 抢同一把锁：试听是「点一下就来一次」，用户很容易连着点
+    # 好几个说话人，而模型的 CUDA graph 与输入 buffer 是共享的 ——
+    # 两路生成同时进去会互相踩，存下来的音频张冠李戴（vivian 会变成别人的嗓子）。
+    with _GPU_LOCK:
+        if path.exists():       # 排队等锁的这会儿，别人可能已经把它生成好了
+            return path
+        wav, sr, _ = gen_official_text(text, lang, key, None, size)
+        sf.write(str(path), np.asarray(wav, dtype=np.float32), sr)
+    return path
+
+
+# ---------------------------------------------------------------------------
+# 统一入口（server.py 只调这个）
+# ---------------------------------------------------------------------------
+def synthesize(p: dict) -> tuple[np.ndarray, int, str, str]:
+    """按参数生成一段音频。
+
+    返回 ``(waveform, sample_rate, status, level)``；``level`` ∈ ok/warn/error。
+    ``p`` 的字段：
+        mode        clone | design | official | script
+        text        文本
+        language    语言（Auto / Chinese / …）
+        size        1.7B | 0.6B | auto
+        instruct    情感/风格指令（自由文本）
+        voice       音色库名字（mode=clone 时二选一）
+        ref_audio   参考音频绝对路径（mode=clone 时与 voice 二选一）
+        ref_text    参考音频文本（xvec_only=False 时必填）
+        speaker     官方说话人（mode=official）
+        xvec_only   是否只用说话人向量（仅 mode=clone 有效）
+        gap_secs    段间静音（仅 script / 多人对话）
+    """
+    mode = (p.get("mode") or "clone").strip().lower()
+    text = (p.get("text") or "").strip()
+    if not text:
+        raise RuntimeError("请先输入要合成的文本。")
+    if len(text) > cfg.MAX_TEXT_CHARS:
+        raise RuntimeError(
+            f"文本过长（{len(text)} 字，上限 {cfg.MAX_TEXT_CHARS}）。"
+            "请改用剧本工坊分段合成。"
+        )
+
+    language = p.get("language") or "Auto"
+    prof = cfg.profile()
+    size = cfg.resolve_size(p.get("size"))
+    instruct = (p.get("instruct") or "").strip() or None
+
+    # 同一时刻只允许一次生成：GPU 上并行会互相踩显存
+    with _GPU_LOCK:
+        t0 = time.time()
+        try:
+            if mode == "design":
+                wav, sr = _gen_design(text, language, instruct or "")
+                extra = ""   # 模式名参数区已经写了，不必再提示一遍
+            elif mode == "official":
+                wav, sr, extra = gen_official_text(text, language,
+                                                   p.get("speaker") or "vivian",
+                                                   instruct, size)
+            elif mode == "script":
+                wav, sr, extra, warns = gen_script(text, language, size)
+                extra = extra + ("\n" + "\n".join(warns) if warns else "")
+            elif mode == "clone":
+                wav, sr, extra = _synth_clone(p, language, instruct, size)
+            else:
+                raise RuntimeError(f"未知的生成模式：{mode}")
+        except Exception as e:  # noqa: BLE001
+            # 第一层降级：清缓存后原样重试一次（碎片导致的 OOM 常能救回来）
+            if _is_oom(e):
+                _MGR._unload_locked()
+                try:
+                    if mode == "clone":
+                        wav, sr, extra = _synth_clone(p, language, instruct, size)
+                    elif mode == "official":
+                        wav, sr, extra = gen_official_text(
+                            text, language, p.get("speaker") or "vivian", instruct, size)
+                    elif mode == "design":
+                        raise
+                    elif mode == "script":
+                        wav, sr, extra, _ = gen_script(text, language, size)
+                    else:
+                        raise
+                    level = "warn"
+                    extra = (extra or "") + "\n已释放显存后重试成功。"
+                except Exception as e2:  # noqa: BLE001
+                    return np.zeros(1, dtype=np.float32), 24000, _friendly_error(e2), "error"
+            else:
+                return np.zeros(1, dtype=np.float32), 24000, _friendly_error(e), "error"
+        else:
+            level = "ok"
+
+    status = _status_line(wav, sr, time.time() - t0, extra)
+    return wav, sr, status, level
+
+
+def _synth_clone(
+    p: dict, language: str, instruct: str | None, size: str
+) -> tuple[np.ndarray, int, str]:
+    """语音克隆：音色库优先，其次用上传的参考音频。"""
+    voice_name = (p.get("voice") or "").strip()
+    warm = None
+    # 状态行的第二行。结果卡的「本次参数」已经把音色名/临时上传列出来了，
+    # 这里再报一遍只是噪音 —— 这个口子只留给「参数区看不到」的增量信息。
+    extra = ""
+    if voice_name:
+        v = voices_mod.load_voice(voice_name)
+        if v is None:
+            raise RuntimeError(f"音色库里没有 [{voice_name}]。")
+        ref_audio, ref_text = v["audio_path"], v.get("ref_text", "")
+        if p.get("xvec_only") is None:
+            xvec_only = v.get("xvec_only", cfg.CLONE_XVEC_ONLY)
+        else:
+            xvec_only = bool(p["xvec_only"])
+        warm = v.get("prompt")
+    else:
+        ref_audio = (p.get("ref_audio") or "").strip()
+        if not ref_audio:
+            raise RuntimeError("请选择一个音色，或上传参考音频。")
+        ref_text = (p.get("ref_text") or "").strip()
+        xvec_only = bool(p.get("xvec_only", cfg.CLONE_XVEC_ONLY))
+
+    if not xvec_only and not ref_text:
+        raise RuntimeError(
+            "关闭了「仅用说话人向量」时必须填写参考音频的文本，"
+            "否则完整 ICL 模式无法对齐。请补上参考文本，或改回仅用向量。"
+        )
+
+    text = (p.get("text") or "").strip()
+    prof = cfg.profile()
+    pieces = split_text(text, prof.script_chunk_chars)
+    if len(pieces) == 1:
+        wav, sr = _gen_clone(pieces[0], language, ref_audio, ref_text, instruct, size, xvec_only, warm)
+    else:
+        segs = []
+        for piece in pieces:
+            wav_i, sr = _gen_clone(piece, language, ref_audio, ref_text, instruct, size, xvec_only, warm)
+            segs.append((wav_i, sr))
+            warm = None  # 预热一次即可，后续段直接命中缓存
+        wav, sr = _join_segments(segs, cfg.SCRIPT_GAP_SECS)
+        extra += f"（长文本自动切为 {len(pieces)} 段）"
+    return wav, sr, extra

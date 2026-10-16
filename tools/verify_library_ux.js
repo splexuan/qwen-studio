@@ -1,0 +1,492 @@
+/* 一次性验证脚本：音色库 / 剧本工坊 / 合成记录的几处扫视与检索改动。
+
+   要验四件事：
+   1. 音色名用强调色（满屏灰卡片里名字要跳得出来）
+   2. 音色库的模糊搜索：子串命中、顺序字符命中、和「克隆方式」筛选叠加、
+      空态给得清楚、Esc 清空
+   3. 剧本工坊的角色音色快捷条：点一下插到光标处（光标在行中间时另起一行）、
+      已用的角色淡下去、插入的内容落进草稿
+   4. 合成记录的正文被截两行，鼠标移上去弹出全文；短到一行放得下的不弹
+
+   自给自足：临时造两个音色、往 outputs/history.json 塞两条记录，收尾全撤掉。
+   **用独立的浏览器上下文**（不共享 localStorage）—— 否则测试往剧本框里打的字
+   会在 unload 时被 beforeunload 存成用户的草稿，把人家写的东西冲掉。
+
+   跑法（在项目根目录）：
+     NODE_PATH=<...>/node_modules node tools/verify_library_ux.js
+   端口默认 7867，可用 QWENSTUDIO_PORT 覆盖。
+*/
+const fs = require("fs");
+const { chromium } = require("playwright-core");
+
+const BASE = "http://127.0.0.1:" + (process.env.QWENSTUDIO_PORT || "7867");
+const OUT = "tools/_library_ux.png";
+const HIST = "C:/Game/qwen-studio/outputs/history.json";
+const V1 = "__验证_甲乙";
+const V2 = "__验证_丙丁";
+const V3 = "__验证_戊己";
+const WAV = process.env.UX_TEST_WAV || "C:/Game/qwen-studio/voices/皇帝.wav";
+
+const jget = async (p) => (await fetch(BASE + p)).json();
+const jpost = async (p, b) => (await fetch(BASE + p, {
+  method: "POST", headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(b),
+})).json();
+
+// 得**真的**超过两行才会被截。实测 1440 宽的窗口下 `.hrow__text` 有 1086px 宽、
+// 一行 13.5px 的汉字能放约 80 个 —— 两行就是 160 字。第一版写了 155 字，
+// 刚好卡在边界里没被截到，结果「悬停弹全文」那几条断言全在空测。
+// 这里给到三百多字，留足余量。
+const LONG = "（验证用）这一段是特意写得很长的正文，用来确认合成记录里的文本会被截成两行，"
+  + "并且鼠标移到上面时能弹出完整原文。这一段要足够长 —— 在宽屏上，一行就能放下八十来个汉字，"
+  + "只写一两句的话根本触不到第二行的边，浮层也就不会被挂上去，测出来的「通过」是假的。"
+  + "所以这里一直往下续，续到它稳稳地超过两行、真的被裁掉为止。"
+  + "再补一段同样的话，免得将来窗口更宽、字体更小的时候，这段又缩回两行以内。"
+  + "正文本身没有意义，它唯一的用途就是把这一段的高度撑过两行。"
+  // 后半段是刻意凑长的：超过 600 字才走得到「列表里只渲染前 600 字」那条路，
+  // 超过 700 字才走得到浮层的长文缩字号。两件事都得被这一步踩到，否则等于没测。
+  + "以下是重复内容，只为把长度推过六百字和七百字这两个坎 —— "
+  + "甲：参考音频要干净，一段两三秒的自然说话胜过十秒带混响的素材。"
+  + "乙：参考文本要逐字对准，完整 ICL 模式下写错一个字，出来就是另一种腔调。"
+  + "丙：情绪先改标点，把句号换成破折号或者省略号，比堆形容词立竿见影。"
+  + "丁：同一段文本连着跑两次本来就不会逐帧一致，想比出差异得跑够五条看均值。"
+  + "戊：显存只有六个 G，同一时刻只让一套权重住进去，换规格之前必须先卸载。";
+const SHORT = "（验证用）短句。";
+const RID_LONG = "verify_ux_long";
+const RID_SHORT = "verify_ux_short";
+
+(async () => {
+  const browser = await chromium.launch({ channel: "chrome", headless: true, args: ["--mute-audio"] });
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 } });   // 隔离的 localStorage
+  const page = await ctx.newPage();
+
+  const fails = [];
+  const ok = (label, cond, detail = "") => {
+    console.log(`  [${cond ? "OK  " : "FAIL"}] ${label}${detail ? "  → " + detail : ""}`);
+    if (!cond) fails.push(label);
+  };
+  const consoleErrors = [];
+  page.on("console", (m) => {
+    if (m.type() !== "error") return;
+    // 下面有一条**故意**去撞同名保存的用例，浏览器会为那个 409 记一条
+    // 「Failed to load resource」——那是我们自己要的结果，不是页面报错。
+    // 白名单只放这一条，别的 console.error 一律照旧算失败。
+    if (/Failed to load resource.*status of 409/.test(m.text())) return;
+    consoleErrors.push(m.text());
+  });
+  page.on("pageerror", (e) => consoleErrors.push("pageerror: " + e.message));
+
+  const cdp = await ctx.newCDPSession(page);
+  await cdp.send("Network.setCacheDisabled", { cacheDisabled: true });
+
+  // 完整加载目标页（先 about:blank，避免被当成同文档的 hash 跳转）
+  const goto = async (hash) => {
+    await page.goto("about:blank");
+    await page.goto(BASE + "/" + hash, { waitUntil: "networkidle" });
+  };
+  const namesNow = () => page.evaluate(() =>
+    [...document.querySelectorAll(".vitem")].map((e) => e.dataset.name));
+  const typeQ = async (q) => {
+    await page.fill("#l-q", q);
+    await page.waitForTimeout(220);
+  };
+
+  // ---- 准备：临时音色 + 临时记录 ----
+  const lib = await jget("/api/voices");
+  if (!lib.voices?.length) { console.log("音色库是空的，无法验证"); process.exit(1); }
+  const src = lib.voices[0].name;
+  await jpost("/api/voices/delete", { names: [V1, V2, V3] });
+  const a = await jpost("/api/voices", { name: V1, voice: src, xvec_only: true, prompt: false });
+  const b = await jpost("/api/voices", { name: V2, voice: src, xvec_only: false, prompt: false });
+  if (a.name !== V1 || b.name !== V2) {
+    console.log("临时音色没建起来：" + JSON.stringify([a, b]));
+    process.exit(1);
+  }
+
+  const histOrig = fs.existsSync(HIST) ? fs.readFileSync(HIST, "utf8") : "[]";
+  const mkRec = (id, text) => ({
+    id, ts: "2026-01-01 00:00:00", mode: "clone", size: "1.7B", language: "Auto",
+    voice: src, instruct: "", text, chars: text.length,
+    file: "", duration: 1.0, status: "ok",
+  });
+  let items = [];
+  try { items = JSON.parse(histOrig) || []; } catch (_) { items = []; }
+  fs.writeFileSync(HIST, JSON.stringify([mkRec(RID_LONG, LONG), mkRec(RID_SHORT, SHORT), ...items], null, 1),
+    "utf8");
+  console.log(`[0] 临时音色 ${V1} / ${V2}，临时记录 ${RID_LONG} / ${RID_SHORT} 已就位`);
+
+  try {
+    // ======================= 1. 名字的强调色 =======================
+    await goto("#library");
+    await page.waitForSelector(".vitem", { timeout: 15000 });
+    console.log("[1] 音色名的颜色");
+    const col = await page.evaluate(() => {
+      const probe = document.createElement("span");
+      probe.style.color = "var(--accent)";
+      document.body.appendChild(probe);
+      const accent = getComputedStyle(probe).color;
+      probe.remove();
+      const nm = document.querySelector(".vitem__name");
+      const rf = document.querySelector(".vitem__ref");
+      return {
+        name: nm ? getComputedStyle(nm).color : "",
+        accent,
+        ref: rf ? getComputedStyle(rf).color : "",
+      };
+    });
+    ok("音色名是强调色", col.name === col.accent, `${col.name} vs accent ${col.accent}`);
+    ok("名字和参考文本的灰不同色", col.name !== col.ref, `${col.name} vs ${col.ref}`);
+
+    // ======================= 2. 模糊搜索 =======================
+    console.log("[2] 音色库模糊搜索");
+    ok("搜索框在（type=search）",
+       await page.$eval("#l-q", (el) => el.tagName === "INPUT" && el.type === "search"));
+
+    const total = (await namesNow()).length;
+    await typeQ("甲乙");
+    const q1 = await namesNow();
+    ok("子串命中：留下甲乙、排除丙丁",
+       q1.includes(V1) && !q1.includes(V2), q1.join("、") || "（空）");
+    ok("确实筛掉了东西", q1.length < total, `${q1.length} / ${total}`);
+
+    await typeQ("验证甲乙");            // 少了「__」，只能靠顺序字符命中
+    const q2 = await namesNow();
+    ok("顺序字符命中（「验证甲乙」→「__验证_甲乙」）", q2.includes(V1), q2.join("、") || "（空）");
+
+    const summary = (await page.textContent("#l-summary"))?.trim() || "";
+    ok("概要行切成「筛出 N / 共 M」", /^筛出 \d+ \/ 共 \d+ 个音色$/.test(summary), summary);
+
+    await typeQ("zzz_根本没有这个音色");
+    const empty = (await page.textContent("#l-grid-host"))?.replace(/\s+/g, "") || "";
+    ok("搜不到时给的是「没有名字匹配」而不是「这一档没有」",
+       empty.includes("没有名字匹配"), (await page.textContent("#l-grid-host"))?.trim().slice(0, 60));
+    ok("空态里有「清空筛选」按钮", await page.$("#l-grid-host [data-role=clearq]") !== null);
+
+    await page.click("#l-grid-host [data-role=clearq]");
+    await page.waitForTimeout(220);
+    const cleared = await namesNow();
+    ok("点「清空筛选」回到全部", cleared.length === total, `${cleared.length} / ${total}`);
+    ok("输入框也被清空了", (await page.inputValue("#l-q")) === "");
+
+    // 与「克隆方式」筛选叠加
+    await page.click('#l-filter [data-mode="icl"]');
+    await page.waitForTimeout(200);
+    await typeQ("甲乙");
+    const combo = await namesNow();
+    ok("叠加：完整 ICL + 「甲乙」→ 一个都没有（甲乙是仅向量）",
+       combo.length === 0, combo.join("、") || "（空）");
+    await page.click('#l-filter [data-mode="all"]');
+    await page.waitForTimeout(200);
+
+    // Esc 清空
+    await typeQ("甲乙");
+    await page.focus("#l-q");
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(220);
+    ok("Esc 清空搜索框", (await page.inputValue("#l-q")) === "", await page.inputValue("#l-q"));
+    ok("Esc 之后列表也回到全部", (await namesNow()).length === total);
+
+    await page.screenshot({ path: OUT });
+
+    // ======================= 3. 「选音色」＝ 按钮 + 弹窗 =======================
+    // 用户提的：音色库会一直长，把整个库罗列在页面上早晚变成一堵墙。
+    console.log("[3] 选音色的按钮 + 弹窗");
+    await goto("#script");
+    await page.waitForSelector("#s-pick", { timeout: 15000 });
+
+    // 页面上不该再有任何「音色清单」
+    const laidOut = await page.evaluate(() => ({
+      rolechips: document.querySelectorAll(".rolechip, #s-roles").length,
+      listed: document.querySelectorAll(".vchip, .vrow").length,
+    }));
+    ok("剧本页不再把音色罗列出来", laidOut.rolechips === 0 && laidOut.listed === 0,
+       `rolechip=${laidOut.rolechips} · 页面上的音色条目=${laidOut.listed}`);
+
+    const setText = (v, caret) => page.evaluate(([val, c]) => {
+      const ta = document.querySelector("#s-text");
+      ta.value = val;
+      ta.focus();
+      ta.setSelectionRange(c, c);
+    }, [v, caret]);
+
+    // 打开弹窗，搜出来再选 —— 顺便把搜索这条路也走一遍
+    const openPicker = async (sel = "#s-pick") => {
+      await page.click(sel);
+      await page.waitForSelector("dialog.modal .vrow", { timeout: 8000 });
+    };
+
+    // 基数从接口现取，别写死 —— 用户随时会往库里加音色
+    const libTotal = (await jget("/api/voices")).voices.length;
+    await setText("", 0);
+    await openPicker();
+    const allRows = await page.$$eval("dialog.modal .vrow", (els) => els.length);
+    ok("弹窗列出了库里全部音色", allRows === libTotal, `${allRows} 条 / 库里 ${libTotal} 个`);
+    const pmText = (await page.textContent("dialog.modal #__pn"))?.trim() || "";
+    ok("顶部报出总数", pmText.includes(`共 ${libTotal} 个`), pmText);
+    ok("弹窗里有搜索框", await page.$("dialog.modal #__pq") !== null);
+    ok("弹窗里有克隆方式筛选", await page.$$eval("dialog.modal [data-mode]", (e) => e.length) === 3);
+
+    await page.fill("dialog.modal #__pq", src);
+    await page.waitForTimeout(250);
+    const filtered = await page.$$eval("dialog.modal .vrow", (els) => els.map((e) => e.dataset.name));
+    ok("搜索能筛，且要的那个排在最前", filtered[0] === src && filtered.length < allRows,
+       `筛出 ${filtered.length} / ${allRows}：${filtered.slice(0, 3).join("、")}`);
+
+    await page.keyboard.press("Enter");        // 回车选中第一条
+    await page.waitForTimeout(300);
+    let val = await page.inputValue("#s-text");
+    ok("回车就选中最靠上的那条", val === `[${src}] `, JSON.stringify(val));
+    ok("选完弹窗自己关掉", await page.$("dialog.modal") === null);
+
+    // 光标停在行中间 → 另起一行再插
+    await setText("先说一句", 4);
+    await openPicker();
+    await page.fill("dialog.modal #__pq", src);
+    await page.waitForTimeout(250);
+    await page.click(`dialog.modal .vrow[data-name="${src}"]`);
+    await page.waitForTimeout(300);
+    val = await page.inputValue("#s-text");
+    ok("光标在行中间 → 另起一行再插（不会把那一行切两半）",
+       val === `先说一句\n[${src}] `, JSON.stringify(val));
+
+    // 插入的内容要落进草稿（程序赋值不派发 input，必须自己存）
+    const draft = await page.evaluate(() => {
+      try { return JSON.parse(localStorage.getItem("qs-draft") || "{}")["#s-text"]; }
+      catch (_) { return null; }
+    });
+    ok("插入的内容进了草稿", draft === val, JSON.stringify(draft));
+
+    // 取消不该插进去任何东西
+    const beforeCancel = await page.inputValue("#s-text");
+    await openPicker();
+    await page.click("dialog.modal [data-role=no]");
+    await page.waitForTimeout(300);
+    ok("点「取消」什么都不插", (await page.inputValue("#s-text")) === beforeCancel);
+    await openPicker();
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(300);
+    ok("按 Esc 关掉也不插", (await page.inputValue("#s-text")) === beforeCancel);
+    ok("两次取消后弹窗都关掉了", await page.$("dialog.modal") === null);
+
+    // 解析反馈并进了输入框：**框里标红说「哪一行」，下面说明「为什么」**。
+    // （上一轮是「上面一条注意把问题念一遍、下面红行又写一遍」，那才叫重复。）
+    await page.waitForTimeout(700);
+    const pv = await page.evaluate(() => ({
+      bad: [...document.querySelectorAll("#s-hl .hl-line.is-bad")].map((e) => e.textContent.trim()),
+      issues: [...document.querySelectorAll("#s-issues .note")].map((e) => e.textContent.trim()),
+      stats: document.querySelector("#s-stats")?.textContent?.replace(/\s+/g, "") || "",
+    }));
+    ok("有问题的两行在框里标了红", pv.bad.length === 2, pv.bad.join(" | ").slice(0, 60));
+    ok("下面的说明只说「为什么」，不把原句再抄一遍",
+       pv.issues.length === 1 && pv.issues[0].includes("第 1 行")
+       && !pv.issues[0].includes(pv.bad[0] || "\u0000"),
+       pv.issues[0]?.slice(0, 60));
+    ok("统计也在同一张卡里", /行2/.test(pv.stats) && pv.stats.includes("可合成0"), pv.stats.slice(0, 50));
+    await page.screenshot({ path: OUT.replace(".png", "_script_bad.png") });
+
+    await page.fill("#s-text", `[${src}] 这一行格式没问题。`);
+    await page.waitForTimeout(700);
+    const okNote = await page.textContent("#s-issues .note").catch(() => "");
+    ok("全都解析得出时给一句肯定", (okNote || "").includes("每一行都能解析"), (okNote || "").trim().slice(0, 40));
+
+    await page.screenshot({ path: OUT.replace(".png", "_script.png") });
+
+    // ======================= 3.5 存音色的两条路 =======================
+    console.log("[3.5] 存音色：撞名问覆盖 / 全新名字直接存");
+    // 保存音色默认会顺手排一个「抽音色基因」的后台任务，那要加载模型，
+    // 而验证实例和用户自己那台共用一块 6 GB 显存 —— 塞不下第二个模型实例。
+    // 这里把请求体里的 prompt 改成 false 再放行：名称唯一这条逻辑跟 prompt 无关，
+    // 测到的仍然是真后端、真状态码、真错误文案。
+    await page.route("**/api/voices", async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      let body = {};
+      try { body = JSON.parse(route.request().postData() || "{}"); } catch (_) {}
+      body.prompt = false;
+      return route.continue({ postData: JSON.stringify(body) });
+    });
+
+    await goto("#clone");
+    await page.waitForSelector("#c-pick", { timeout: 15000 });
+
+    // 克隆页：页面上只留一个按钮，音色清单搬进弹窗
+    const cloneLayout = await page.evaluate(() => ({
+      listed: document.querySelectorAll("#c-pane-lib .vchip, #c-pane-lib .vrow").length,
+      label: document.querySelector("#c-pick .pickbtn__v")?.textContent || "",
+      empty: document.querySelector("#c-pick .pickbtn__v")?.classList.contains("is-empty"),
+    }));
+    ok("克隆页也不再罗列音色", cloneLayout.listed === 0, `${cloneLayout.listed} 条`);
+    ok("按钮上显示当前选中的音色（一开始是空的）",
+       cloneLayout.empty === true && cloneLayout.label.includes("选一个"), cloneLayout.label);
+
+    await page.click("#c-pick");
+    await page.waitForSelector("dialog.modal .vrow", { timeout: 8000 });
+    await page.click(`dialog.modal .vrow[data-name="${src}"]`);
+    await page.waitForTimeout(300);
+    const picked = await page.evaluate(() => ({
+      label: document.querySelector("#c-pick .pickbtn__v")?.textContent || "",
+      empty: document.querySelector("#c-pick .pickbtn__v")?.classList.contains("is-empty"),
+      detail: document.querySelector("#c-lib-detail")?.textContent || "",
+    }));
+    ok("选完按钮上就换成那个音色名", picked.label === src && picked.empty === false, picked.label);
+    ok("下面的详情跟着这个音色走", picked.detail.includes("克隆方式"), picked.detail.slice(0, 40));
+
+    // 重新打开时，当前那个音色要被标出来
+    await page.click("#c-pick");
+    await page.waitForSelector("dialog.modal .vrow", { timeout: 8000 });
+    ok("弹窗里标出了「当前」那一个",
+       (await page.$$eval("dialog.modal .vrow.is-on", (e) => e.length)) === 1
+       && (await page.textContent("dialog.modal .vrow.is-on .vrow__n"))?.trim() === src);
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(200);
+
+    await page.click("#c-tab-up");    // 「存进音色库」在临时上传那一栏里，默认那栏是收起的
+    await page.setInputFiles("#c-file", WAV);
+    await page.waitForFunction(() => !document.querySelector("#c-save").disabled, null, { timeout: 60000 });
+    ok("参考音频就绪、保存按钮可用", true);
+
+    const saveAs = async (name) => {
+      // 存成功之后界面会自己切回「音色库」那一栏（上传栏随之收起），
+      // 所以每次都要先把栏切回来 —— 上传状态本身不会因为切栏丢掉。
+      await page.click("#c-tab-up");
+      await page.waitForSelector("#c-save:visible", { timeout: 8000 });
+      await page.click("#c-save");
+      await page.waitForSelector("dialog.modal #__nm", { timeout: 10000 });
+      await page.fill("dialog.modal #__nm", name);
+      await page.click("dialog.modal [data-role=yes]");
+    };
+    const libNames = async () => (await jget("/api/voices")).voices.map((v) => v.name);
+    const before = (await libNames()).length;
+
+    // (a) 撞名 → 取消：不该静默改名，也不该存进去
+    await saveAs(V1);
+    await page.waitForSelector("dialog.modal .modal__head h2", { timeout: 10000 });
+    const dupTitle = (await page.textContent("dialog.modal .modal__head h2")) || "";
+    ok("撞名时弹确认框，而不是只丢一句红字", dupTitle.includes("同名音色已存在"), dupTitle);
+    await page.click("dialog.modal [data-role=no]");
+    await page.waitForTimeout(700);
+    const toastNo = (await page.textContent("#toasts")) || "";
+    ok("选「取消」→ 说明已存在、没有保存", toastNo.includes("已存在"), toastNo.trim().slice(0, 50));
+    const afterNo = await libNames();
+    ok("取消后音色数量没变（没被悄悄存成 xxx_2）",
+       afterNo.length === before && !afterNo.some((n) => n.startsWith(V1 + "_")),
+       `${before} → ${afterNo.length}`);
+
+    // (b) 撞名 → 覆盖：还是只有一个同名音色
+    await saveAs(V1);
+    await page.waitForSelector("dialog.modal .modal__head h2", { timeout: 10000 });
+    await page.click("dialog.modal [data-role=yes]");
+    await page.waitForTimeout(1600);
+    const toastYes = (await page.textContent("#toasts")) || "";
+    ok("选「覆盖」→ 提示确实是覆盖", toastYes.includes("覆盖"), toastYes.trim().slice(0, 50));
+    const afterYes = await libNames();
+    ok("覆盖后同名音色仍然只有一个",
+       afterYes.filter((n) => n === V1).length === 1 && !afterYes.some((n) => n.startsWith(V1 + "_"))
+         && afterYes.length === before,
+       afterYes.filter((n) => n.startsWith(V1)).join("、"));
+
+    // (c) 全新名字：这条路上不该插任何对话框
+    await saveAs(V3);
+    await page.waitForTimeout(1600);
+    ok("全新名字直接存下来（这次改动没把正常保存弄坏）",
+       (await libNames()).includes(V3), (await libNames()).filter((n) => n.startsWith("__验证")).join("、"));
+
+    // ======================= 4. 合成记录正文的悬停浮层 =======================
+    console.log("[4] 合成记录的正文悬停浮层");
+    await goto("#history");
+    await page.waitForSelector(`.hrow[data-id="${RID_LONG}"]`, { timeout: 15000 });
+
+    const clip = await page.evaluate((id) => {
+      const p = document.querySelector(`.hrow[data-id="${id}"] .hrow__text`);
+      const st = getComputedStyle(p);
+      return { clamp: st.webkitLineClamp || st.getPropertyValue("-webkit-line-clamp"), sh: p.scrollHeight, ch: p.clientHeight };
+    }, RID_LONG);
+    ok("长正文被截成两行", String(clip.clamp) === "2" && clip.sh > clip.ch + 1,
+       `line-clamp=${clip.clamp} · ${clip.sh} > ${clip.ch}`);
+
+    const box = await page.evaluate((id) => {
+      const r = document.querySelector(`.hrow[data-id="${id}"] .hrow__text`).getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    }, RID_LONG);
+    await page.mouse.move(box.x, box.y);
+    await page.waitForSelector(".tip.is-on", { timeout: 4000 }).catch(() => {});
+    const tip = await page.evaluate((id) => {
+      const t = document.querySelector(".tip");
+      if (!t) return null;
+      const rect = (el) => {
+        const r = el.getBoundingClientRect();
+        return { l: r.left, t: r.top, r: r.right, b: r.bottom, w: r.width, h: r.height };
+      };
+      const row = document.querySelector(`.hrow[data-id="${id}"]`);
+      // 量**按钮本身**的并集，不是 .hrow__acts 那个容器 ——
+      // 它是 display:flex 的块级元素，横向撑满整行，「浮层在它右边」永远不成立。
+      const btns = [...row.querySelectorAll(".hrow__acts .btn")].map(rect);
+      const acts = {
+        l: Math.min(...btns.map((b) => b.l)), t: Math.min(...btns.map((b) => b.t)),
+        r: Math.max(...btns.map((b) => b.r)), b: Math.max(...btns.map((b) => b.b)),
+      };
+      return {
+        on: t.classList.contains("is-on"), text: t.textContent,
+        pe: getComputedStyle(t).pointerEvents,
+        btnCount: btns.length,
+        box: rect(t), row: rect(row), acts,
+        inView: (() => { const r = t.getBoundingClientRect();
+          return r.left >= 0 && r.top >= 0 && r.bottom <= innerHeight + 1 && r.right <= innerWidth + 1; })(),
+      };
+    }, RID_LONG);
+    ok("悬停后浮层出现", !!tip && tip.on === true);
+    ok("浮层里是完整原文", !!tip && tip.text === LONG,
+       tip ? `${tip.text.length} 字 vs 期望 ${LONG.length} 字` : "（没有浮层）");
+    ok("浮层落在视口里", !!tip && tip.inView);
+
+    // 用户报过：浮层铺在左边，把那一行下面的「试听 / 复制 / 删除」压住了。
+    // 两条一起管：位置移到按钮右侧 + 压根不接鼠标事件（后者是兜底，
+    // 窗口窄到必须往回压时也保证点得到按钮）。
+    ok("浮层不接鼠标事件（压住也点得到按钮）", !!tip && tip.pe === "none", tip?.pe);
+    ok("浮层在操作按钮的右侧，没铺在左边",
+       !!tip && tip.btnCount > 0 && tip.box.l >= tip.acts.r,
+       `浮层左沿 ${Math.round(tip?.box.l)} · ${tip?.btnCount} 个按钮的右沿 ${Math.round(tip?.acts.r)}`);
+    const overlap = !!tip && !(tip.box.r <= tip.acts.l || tip.box.l >= tip.acts.r
+      || tip.box.b <= tip.acts.t || tip.box.t >= tip.acts.b);
+    ok("浮层不和操作按钮的方块相交", !!tip && !overlap,
+       overlap ? `浮层 ${Math.round(tip.box.l)}–${Math.round(tip.box.r)} × `
+         + `${Math.round(tip.box.t)}–${Math.round(tip.box.b)}，按钮 ${Math.round(tip.acts.l)}–`
+         + `${Math.round(tip.acts.r)} × ${Math.round(tip.acts.t)}–${Math.round(tip.acts.b)}` : "");
+    if (tip?.on) await page.screenshot({ path: OUT.replace(".png", "_tip.png") });
+
+    await page.mouse.move(8, 8);
+    await page.waitForTimeout(500);
+    ok("移开鼠标后浮层收起",
+       await page.evaluate(() => !document.querySelector(".tip")?.classList.contains("is-on")));
+
+    // 短到一行放得下的不弹
+    const sbox = await page.evaluate((id) => {
+      const r = document.querySelector(`.hrow[data-id="${id}"] .hrow__text`).getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    }, RID_SHORT);
+    await page.mouse.move(sbox.x, sbox.y);
+    await page.waitForTimeout(400);
+    ok("短正文（一行放得下）不弹浮层",
+       await page.evaluate(() => !document.querySelector(".tip")?.classList.contains("is-on")));
+    await page.mouse.move(8, 8);
+
+    ok("全程无 JS 报错", consoleErrors.length === 0, consoleErrors.slice(0, 2).join(" | "));
+  } finally {
+    // ---- 收尾：临时记录原样放回，临时音色删掉 ----
+    try { fs.writeFileSync(HIST, histOrig, "utf8"); } catch (_) {}
+    try { await jpost("/api/voices/delete", { names: [V1, V2, V3] }); } catch (_) {}
+    const left = (await jget("/api/voices")).voices.map((v) => v.name);
+    const ghost = left.filter((n) => [V1, V2, V3].includes(n) || n.startsWith(V1 + "_"));
+    console.log("[5] 已还原 history.json、删掉临时音色");
+    if (ghost.length) { console.log("   残留音色：" + ghost.join("、")); fails.push("临时音色没清干净"); }
+    await browser.close();
+  }
+
+  console.log("\n" + "=".repeat(60));
+  if (fails.length) {
+    console.log(`${fails.length} 项未通过：`);
+    fails.forEach((f) => console.log("   - " + f));
+    process.exit(1);
+  }
+  console.log("全部通过");
+  console.log("截图：" + OUT + " / " + OUT.replace(".png", "_script.png"));
+})();
