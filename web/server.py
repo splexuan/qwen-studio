@@ -40,6 +40,10 @@ DOM 结构上反复与你抢控制权（哈希类名随版本变、注入的 CSS
 
 from __future__ import annotations
 
+import asyncio
+import base64
+import json
+import os
 import shutil
 import socket
 import sys
@@ -47,6 +51,8 @@ import threading
 import time
 import uuid
 from pathlib import Path
+
+import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "app"))
@@ -62,7 +68,9 @@ import script as script_mod  # noqa: E402
 import voices as voices_mod  # noqa: E402
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile  # noqa: E402
-from fastapi.responses import FileResponse, JSONResponse, Response  # noqa: E402
+from fastapi.responses import (  # noqa: E402
+    FileResponse, JSONResponse, Response, StreamingResponse,
+)
 
 app = FastAPI(title="Qwen3-TTS Studio", docs_url=None, redoc_url=None)
 
@@ -262,12 +270,25 @@ async def api_voice_create(payload: dict):
     * ``out``    —— ``outputs/`` 里的生成结果文件名（声音设计的「存进音色库」走这条：
       生成出来的那把嗓子复现不了，得直接拿产物当参考音频，不必先复制一份到别处）
 
-    保存成功后默认**顺手排一个后台任务**生成音色基因，返回的 ``job`` 即任务号；
-    传 ``prompt=false`` 可关掉（批量导入只想要音频时用）。
+    参考文本**必填**：默认走完整 ICL，模型要把「这段音频 + 它说的字」一起喂进去；
+    文本空了 ICL 根本没法用，只能退回只取音色的向量模式 —— 那正是「克隆不像」的主因。
+    所以这道校验放在入口，而不是等合成时才报错。
+
+    音色基因（.pt）是**可选的加速缓存**，默认不再顺手生成：建一次要加载模型、
+    几十秒起步，而省下的只是每次生成的一次 speaker 编码。需要时显式传 ``prompt=true``。
     """
     name = (payload.get("name") or "").strip()
     if not name:
         return _err("请填写音色名。")
+    ref_text = (payload.get("ref_text") or "").strip()
+    # 「另存为」：音频一模一样，它说的字自然也一模一样 —— 从源音色继承文本。
+    # 否则用户只是想改个名字，却被迫把同一段话再逐字抄一遍。
+    if not ref_text and payload.get("voice"):
+        _src = voices_mod.load_voice(_safe(payload["voice"]))
+        if _src:
+            ref_text = (_src.get("ref_text") or "").strip()
+    if not ref_text:
+        return _err("参考文本必填：请逐字照抄这段参考音频里说的话。")
     try:
         source = "upload"
         if payload.get("upload"):
@@ -294,22 +315,25 @@ async def api_voice_create(payload: dict):
         else:
             return _err("请先上传参考音频、选择一个已有音色，或指定一条生成结果。")
 
+        # 参考文本必填之后，默认就该走完整 ICL（更像本人）。
+        # 想只取音色向量（换语种更干净、速度更快）要显式传 xvec_only=true。
+        xvec = payload.get("xvec_only")
+        if xvec is None:
+            xvec = False
+
         info = voices_mod.save_voice(
             name,
             audio,
-            ref_text=(payload.get("ref_text") or ""),
-            xvec_only=payload.get("xvec_only"),
+            ref_text=ref_text,
+            xvec_only=bool(xvec),
             overwrite=bool(payload.get("overwrite")),
             source=source,
         )
 
-        # 顺手把音色基因排进后台队列 —— 刚存的音色必然还没有 .pt
-        # （save_voice 会把覆盖时的旧 .pt 删掉），而它只在「保存」这个
-        # 时刻最容易被忘掉。做成后台任务而不是同步等待：
-        # 抽基因要加载模型，十几秒起步，卡在「保存」上体验很差。
-        # 传 prompt=false 可以只要音色、不要基因（脚本批量导入时用）。
+        # 基因默认不建：它是缓存不是数据，缺了只是每次多编码一遍参考音频。
+        # 要的话显式传 prompt=true，或者之后在音色库里手动「生成音色基因」。
         job = None
-        if payload.get("prompt", True):
+        if payload.get("prompt", False):
             job = _new_job("prompt", {"name": info["name"], "size": payload.get("size")})
 
         return _ok(name=info["name"], replaced=info["replaced"],
@@ -540,6 +564,126 @@ def api_job_status(jid: str):
 
 
 # ---------------------------------------------------------------------------
+# 流式合成（边生成边播）
+# ---------------------------------------------------------------------------
+def _sse(event: str, data: dict) -> bytes:
+    return (
+        f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+    ).encode("utf-8")
+
+
+@app.post("/api/tts/stream")
+async def api_tts_stream(payload: dict):
+    """边生成边推音频块（SSE + base64 float32 PCM）。
+
+    为什么不用「提交任务 + 轮询」：轮询的最小粒度是「发一次、等一次」，
+    用户听到第一声至少晚一个来回。这里一条连接从提交到收尾，首块到了就能播。
+
+    生成是阻塞的 GPU 计算，不能直接跑在事件循环里（会把轮询、静态资源全卡住），
+    所以放在一个后台线程里，通过队列把块扔回协程。
+    """
+    # 归一化和「提交任务」走同一套兜底，否则合成记录里两种任务的参数写法会不一样
+    payload["language"] = payload.get("language") or "Auto"
+    payload["size"] = cfg.resolve_size(payload.get("size"))
+
+    up = payload.get("ref_upload")
+    if up:
+        p = cfg.UPLOAD_DIR / _safe(up)
+        if not p.exists():
+            return _err("临时上传的参考音频已失效，请重新上传。")
+        payload["ref_audio"] = str(p)
+
+    ok, why = core.stream_ready(payload)
+    if not ok:
+        # 409 而不是 400：前端据此「安静地退回普通任务」，不该弹成硬错误
+        return JSONResponse({"ok": False, "error": why, "fallback": True}, status_code=409)
+
+    async def gen():
+        q: asyncio.Queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+        stop = threading.Event()
+
+        def worker() -> None:
+            stream = core.synthesize_stream(payload)
+            try:
+                for kind, pl in stream:
+                    if stop.is_set():
+                        break
+                    loop.call_soon_threadsafe(q.put_nowait, (kind, pl))
+            except Exception as e:  # noqa: BLE001
+                loop.call_soon_threadsafe(
+                    q.put_nowait, ("error", {"message": f"{type(e).__name__}: {e}"})
+                )
+            finally:
+                # 显式 close：客户端半路断开时，core 的 with _GPU_LOCK 要立刻释放，
+                # 不能等垃圾回收 —— 否则下一单会一直卡在等锁。
+                stream.close()
+                loop.call_soon_threadsafe(q.put_nowait, ("__end__", None))
+
+        threading.Thread(target=worker, name="tts-stream", daemon=True).start()
+
+        parts: list[np.ndarray] = []
+        sr = core.STREAM_SAMPLE_RATE
+        try:
+            while True:
+                kind, pl = await q.get()
+                if kind == "__end__":
+                    break
+
+                if kind == "meta":
+                    sr = int(pl.get("sr") or sr)
+                    yield _sse("meta", pl)
+
+                elif kind in ("pcm", "gap"):
+                    arr = np.asarray(pl, dtype=np.float32).reshape(-1)
+                    if arr.size:
+                        parts.append(arr)
+                        yield _sse(
+                            "pcm",
+                            {"b": base64.b64encode(arr.tobytes()).decode("ascii")},
+                        )
+
+                elif kind == "error":
+                    yield _sse("error", pl)
+                    return
+
+                elif kind == "done":
+                    if not parts:
+                        yield _sse("error", {"message": "没有生成任何音频。"})
+                        return
+                    # 收尾：落盘 + 记一条合成记录 —— 流式听到的这一条也要能下载、能回看
+                    wav = np.concatenate(parts)
+                    dur = round(len(wav) / sr, 2) if sr else 0.0
+                    took = pl.get("took")
+                    tag = {"clone": "clone", "design": "design",
+                           "official": "official", "script": "script"}.get(
+                        payload.get("mode", "clone"), "audio")
+                    fname = core.save_wav(wav, sr, tag)
+                    status = core.status_line(wav, sr, took or 0.0)
+                    history_mod.add({**payload, "status": "ok", "file": fname,
+                                     "duration": dur, "took": took})
+                    yield _sse("done", {
+                        "file": fname, "url": f"/media/out/{fname}",
+                        "duration": dur, "took": took, "level": "ok",
+                        "status": status,
+                        "headline": status.splitlines()[0] if status else "",
+                        "pieces": pl.get("pieces"),
+                    })
+                    return
+        finally:
+            stop.set()
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",   # 别让任何中间层攒着再发
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
 # 官方说话人试听
 # ---------------------------------------------------------------------------
 @app.post("/api/speakers/{name}/preview")
@@ -601,7 +745,11 @@ def media_voice(name: str):
     p = voices_mod.path_of(_safe(name), voices_mod.WAV_EXT)
     if not p.exists():
         raise HTTPException(404, "音色不存在")
-    return FileResponse(str(p), media_type="audio/wav")
+    # no-cache = 每次都回来问一句，不是「不缓存」。
+    # 音色是可以原地换音频的（删除重传 / 编辑音频），URL 不变，
+    # 不强制校验的话浏览器会一直放旧的那一份。
+    return FileResponse(str(p), media_type="audio/wav",
+                        headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/media/preview/{name}")
@@ -652,6 +800,46 @@ def favicon():
 # ---------------------------------------------------------------------------
 # 启动
 # ---------------------------------------------------------------------------
+def _preload_weights() -> None:
+    """后台把最常用的一套权重先加载好。
+
+    为什么放在启动时：加载 + 捕获 CUDA graph 要十几到二十秒，而这段时间用户
+    只能盯着一句「首次使用该规格要加载权重」。启动后在后台跑掉，第一次点生成
+    就是热的。
+
+    **必须跑在后台线程**：加载是长时间阻塞调用，还会抢 _GPU_LOCK；放在主线程上
+    端口会一直不通 —— run_web.bat 开的那个页签等到的是「无法连接」。
+
+    规格默认取本机档位（6 GiB 上是 1.7B），kind 默认 clone：
+    克隆与剧本工坊共用同一套 Base 权重，是使用频率最高的那一套。
+
+    关掉：``set QWENSTUDIO_PRELOAD=0``（要把这台机器腾出来跑别的程序时）。
+    换一套：``QWENSTUDIO_PRELOAD_KIND=official`` / ``QWENSTUDIO_PRELOAD_SIZE=0.6B``。
+    """
+    if os.environ.get("QWENSTUDIO_PRELOAD", "1").strip().lower() in ("0", "false", "no", "off"):
+        print("  [预加载] 已关闭（QWENSTUDIO_PRELOAD=0）", flush=True)
+        return
+    kind = (os.environ.get("QWENSTUDIO_PRELOAD_KIND") or "clone").strip().lower()
+    try:
+        size = cfg.resolve_size(os.environ.get("QWENSTUDIO_PRELOAD_SIZE") or None)
+        t0 = time.time()
+        print(f"  [预加载] 后台加载 {kind} / {size} …", flush=True)
+        # 只 load_model 不够：CUDA graph 是第一次 generate 时才捕获的，
+        # 那一段十几秒不预热掉，用户点第一单照样要等。
+        core.load_model(kind, size)
+        t_load = time.time() - t0
+        t_warm = core.warmup(kind, size)
+        print(f"  [预加载] 就绪：加载 {t_load:.1f}s + 预热 {t_warm:.1f}s"
+              f"（总 {time.time() - t0:.1f}s）", flush=True)
+    except Exception as e:  # noqa: BLE001  预加载失败不该让服务起不来
+        print(f"  [预加载] 失败：{type(e).__name__}: {e}", flush=True)
+        print("  [预加载] 生成时会照常重试一次，不影响使用。", flush=True)
+
+
+def _preload_async() -> None:
+    threading.Thread(target=_preload_weights, name="preload", daemon=True).start()
+
+
 def main() -> int:
     try:
         sys.stdout.reconfigure(errors="replace")
@@ -679,6 +867,8 @@ def main() -> int:
     for n in p.notes:
         print(f"  · {n}")
     print("=" * 66)
+
+    _preload_async()
     uvicorn.run(app, host=cfg.HOST, port=cfg.PORT, log_level="warning")
     return 0
 

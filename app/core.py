@@ -331,7 +331,7 @@ def _gen_clone(
 ) -> tuple[np.ndarray, int]:
     model = load_model("clone", size)
     if warm_prompt is not None:
-        _prime_prompt_cache(model, ref_audio, ref_text, xvec_only, warm_prompt)
+        _prime_prompt_cache(model, ref_audio, ref_text, xvec_only, warm_prompt, size)
     wavs, sr = model.generate_voice_clone(
         text=text,
         language=language,
@@ -344,7 +344,8 @@ def _gen_clone(
 
 
 def _prime_prompt_cache(
-    model, ref_audio: str | Path, ref_text: str, xvec_only: bool, payload: dict
+    model, ref_audio: str | Path, ref_text: str, xvec_only: bool, payload: dict,
+    size: str = "",
 ) -> None:
     """把音色基因（.pt）预热进内核的 voice prompt 缓存。
 
@@ -362,10 +363,20 @@ def _prime_prompt_cache(
     try:
         if not xvec_only:
             return
+        # 说话人向量的维度跟着权重规格走：1.7B → 2048，0.6B → 1024。
+        # 基因是「用某套权重抽出来的」，拿 1.7B 的喂 0.6B，会在 prefill 拼张量时
+        # 直接炸（Expected size 1024 but got size 2048）。规格对不上就别预热 ——
+        # 退回现场编码，慢一点但结果正确。
+        # 优先信基因里记的 model_size；早期基因没这个字段，就按向量实际长度判。
+        want_dim = {"1.7B": 2048, "0.6B": 1024}.get(str(size or ""))
+        items = payload.get("items") or []
+        emb = items[0].get("ref_spk_embedding") if items else None
+        got_dim = len(emb) if emb is not None else 0
+        if want_dim and got_dim and got_dim != want_dim:
+            return
         cache = getattr(model, "_voice_prompt_cache", None)
         if cache is None:
             return
-        items = payload.get("items") or []
         if not items:
             return
         key = (str(ref_audio), ref_text or "", True, True)  # 末位是 append_silence
@@ -405,6 +416,23 @@ def _gen_official(
     return np.asarray(wavs[0], dtype=np.float32), int(sr)
 
 
+def _is_official_dialog(text: str) -> bool:
+    """行首都是内置说话人的 ``[角色]`` 时，按多人对话处理。
+
+    流式也要问同一个问题：多人对话是一行一换说话人、逐行生成再拼接的，
+    没有办法"边生成边播"。
+    """
+    import script as script_mod  # 延迟导入：纯解析层，无副作用
+
+    lines = script_mod.parse(text)
+    st = script_mod.stats(lines)
+    return (
+        st["ok_lines"] > 0
+        and st["bad_lines"] == 0
+        and all((ln["role"] or "").lower() in cfg.SPEAKER_NAMES for ln in lines if ln["ok"])
+    )
+
+
 def gen_official_text(
     text: str, language: str, speaker: str, instruct: str | None, size: str
 ) -> tuple[np.ndarray, int, str]:
@@ -414,15 +442,7 @@ def gen_official_text(
     否则整体交给模型一次生成 —— 这样用户直接贴一段带方括号的普通文本
     也不会被误判成对话。
     """
-    import script as script_mod  # 延迟导入：纯解析层，无副作用
-
-    lines = script_mod.parse(text)
-    st = script_mod.stats(lines)
-    is_dialog = (
-        st["ok_lines"] > 0
-        and st["bad_lines"] == 0
-        and all((ln["role"] or "").lower() in cfg.SPEAKER_NAMES for ln in lines if ln["ok"])
-    )
+    is_dialog = _is_official_dialog(text)
 
     if not is_dialog:
         wav, sr = _gen_official(text, language, speaker, instruct, size)
@@ -433,6 +453,11 @@ def gen_official_text(
             "0.6B 规格的官方精品不支持情感指令（内核会把 instruct 强制置空），"
             "多人对话会退化成无情绪的朗读。请切到 1.7B，或去掉行首的 [情感指令]。"
         )
+
+    import script as script_mod
+
+    lines = script_mod.parse(text)
+    st = script_mod.stats(lines)
 
     prof = cfg.profile()
     segs: list[tuple[np.ndarray, int]] = []
@@ -609,15 +634,14 @@ def synthesize(p: dict) -> tuple[np.ndarray, int, str, str]:
     return wav, sr, status, level
 
 
-def _synth_clone(
-    p: dict, language: str, instruct: str | None, size: str
-) -> tuple[np.ndarray, int, str]:
-    """语音克隆：音色库优先，其次用上传的参考音频。"""
+def _resolve_clone_source(p: dict) -> tuple[str, str, bool, Any]:
+    """从 payload 解出参考音频 / 参考文本 / 是否只用向量 / 音色基因。
+
+    非流式与流式共用这一份判断。两条路如果各自解析，同一个音色可能在
+    「直接播」和「边生成边播」下给出两把嗓子 —— 用户会以为是模型不稳定。
+    """
     voice_name = (p.get("voice") or "").strip()
     warm = None
-    # 状态行的第二行。结果卡的「本次参数」已经把音色名/临时上传列出来了，
-    # 这里再报一遍只是噪音 —— 这个口子只留给「参数区看不到」的增量信息。
-    extra = ""
     if voice_name:
         v = voices_mod.load_voice(voice_name)
         if v is None:
@@ -640,6 +664,17 @@ def _synth_clone(
             "关闭了「仅用说话人向量」时必须填写参考音频的文本，"
             "否则完整 ICL 模式无法对齐。请补上参考文本，或改回仅用向量。"
         )
+    return ref_audio, ref_text, bool(xvec_only), warm
+
+
+def _synth_clone(
+    p: dict, language: str, instruct: str | None, size: str
+) -> tuple[np.ndarray, int, str]:
+    """语音克隆：音色库优先，其次用上传的参考音频。"""
+    # 状态行的第二行。结果卡的「本次参数」已经把音色名/临时上传列出来了，
+    # 这里再报一遍只是噪音 —— 这个口子只留给「参数区看不到」的增量信息。
+    extra = ""
+    ref_audio, ref_text, xvec_only, warm = _resolve_clone_source(p)
 
     text = (p.get("text") or "").strip()
     prof = cfg.profile()
@@ -655,3 +690,167 @@ def _synth_clone(
         wav, sr = _join_segments(segs, cfg.SCRIPT_GAP_SECS)
         extra += f"（长文本自动切为 {len(pieces)} 段）"
     return wav, sr, extra
+
+
+# ---------------------------------------------------------------------------
+# 流式（边生成边播）
+# ---------------------------------------------------------------------------
+# 内核每 chunk_size 个 codec 步吐一块，12Hz 编码器下 chunk_size=8 ≈ 0.67 秒音频。
+# 1.7B / 6.5 秒中文 / xvec_only 的实测（tools/bench_stream.py）：
+#     chunk=4   TTFA 453ms   RTF 0.909
+#     chunk=8   TTFA 624ms   RTF 0.827   ← 取这个
+#     chunk=12  TTFA 887ms   RTF 0.769
+# 块越小出声越快，但 RTF 反而越差（固定开销摊不薄）。8 是折中：0.67 秒一块，
+# RTF 还留着 0.17 的余量 —— RTF 一旦 >= 1 就会「播完了下一块还没好」。
+STREAM_CHUNK_SIZE = 8
+
+# 内核输出的波形采样率。注意 12Hz 是 codec 帧率（每秒 12 个 token），不是采样率，
+# 别把名字里的 12Hz 当成音频采样率用。
+STREAM_SAMPLE_RATE = 24000
+
+
+def status_line(wav: np.ndarray, sr: int, t_cost: float, extra: str = "") -> str:
+    """流式收尾时给 server 用。
+
+    普通任务的状态行由 ``synthesize()`` 内部算，流式的音频是边播边攒的、
+    等 server 拼完才知道时长，所以把同一份措辞单独暴露出来 ——
+    两条路必须给出同一个口径的 RTF，否则合成记录里两种任务没法比。
+    """
+    return _status_line(wav, sr, t_cost, extra)
+
+
+def stream_ready(p: dict) -> tuple[bool, str]:
+    """这一单能不能流式。不能时返回一句人话，前端据此退回普通任务。"""
+    mode = (p.get("mode") or "clone").strip().lower()
+    text = (p.get("text") or "").strip()
+    if not text:
+        return False, "请先输入要合成的文本。"
+    if mode == "script":
+        return False, "剧本工坊要逐句换角色、反复重建 prompt，流式会追不上播放。"
+    if mode == "design":
+        return False, "声音设计生成的是「一把新嗓子」，没有边听边等的需求。"
+    if mode == "official":
+        if _is_official_dialog(text):
+            return False, "多人对话要逐行换说话人，无法流式。"
+        return True, ""
+    if mode == "clone":
+        return True, ""
+    return False, f"未知的生成模式：{mode}"
+
+
+def synthesize_stream(p: dict):
+    """流式合成：边生成边把音频块交出去。
+
+    产出 ``(kind, payload)``，``kind`` 取值：
+        meta   首个 —— ``{"sr", "chunk_size", "pieces", "mode"}``
+        pcm    ``np.ndarray`` float32，可多次
+        gap    段间静音 —— ``np.ndarray``
+        done   末个 —— ``{"took", "pieces", "status"}``
+        error  出错 —— ``{"message"}``
+
+    只负责「生成」，落盘与合成记录交给 server —— 与 ``synthesize()`` 的分工一致。
+
+    **整段持 _GPU_LOCK**：generator 在 yield 期间锁不释放，否则另一路生成会挤进
+    同一张 CUDA graph，两路互相踩；出来的音频会张冠李戴。
+    """
+    ok, why = stream_ready(p)
+    if not ok:
+        yield ("error", {"message": why})
+        return
+
+    mode = (p.get("mode") or "clone").strip().lower()
+    text = (p.get("text") or "").strip()
+    language = p.get("language") or "Auto"
+    size = cfg.resolve_size(p.get("size"))
+    instruct = (p.get("instruct") or "").strip() or None
+    chunk_size = max(1, int(p.get("chunk_size") or STREAM_CHUNK_SIZE))
+    prof = cfg.profile()
+    gate = np.zeros(int(STREAM_SAMPLE_RATE * cfg.SCRIPT_GAP_SECS), dtype=np.float32)
+
+    with _GPU_LOCK:
+        t0 = time.time()
+        try:
+            if mode == "clone":
+                ref_audio, ref_text, xvec_only, warm = _resolve_clone_source(p)
+                model = load_model("clone", size)
+                if warm is not None:
+                    _prime_prompt_cache(model, ref_audio, ref_text, xvec_only, warm, size)
+                pieces = split_text(text, prof.script_chunk_chars)
+                yield ("meta", {"sr": STREAM_SAMPLE_RATE, "chunk_size": chunk_size,
+                                "pieces": len(pieces), "mode": mode})
+                for i, piece in enumerate(pieces):
+                    if i:
+                        yield ("gap", gate)
+                    stream = model.generate_voice_clone_streaming(
+                        text=piece, language=language,
+                        ref_audio=str(ref_audio), ref_text=ref_text or "",
+                        xvec_only=xvec_only, instruct=instruct,
+                        chunk_size=chunk_size,
+                    )
+                    for chunk, _sr, _timing in stream:
+                        yield ("pcm", np.asarray(chunk, dtype=np.float32))
+                    # 基因只预热一次；后续段直接命内核缓存
+                    warm = None
+            else:  # official 单人（多人对话已在 stream_ready 挡掉）
+                model = load_model("official", size)
+                speaker = (p.get("speaker") or "vivian").lower()
+                pieces = split_text(text, prof.script_chunk_chars)
+                yield ("meta", {"sr": STREAM_SAMPLE_RATE, "chunk_size": chunk_size,
+                                "pieces": len(pieces), "mode": mode})
+                for i, piece in enumerate(pieces):
+                    if i:
+                        yield ("gap", gate)
+                    stream = model.generate_custom_voice_streaming(
+                        text=piece, speaker=speaker, language=language,
+                        instruct=instruct, chunk_size=chunk_size,
+                    )
+                    for chunk, _sr, _timing in stream:
+                        yield ("pcm", np.asarray(chunk, dtype=np.float32))
+        except Exception as e:  # noqa: BLE001
+            yield ("error", {"message": _friendly_error(e)})
+            return
+
+        yield ("done", {"took": round(time.time() - t0, 2),
+                        "pieces": len(pieces), "status": ""})
+
+
+def warmup(kind: str = "clone", size: str = "") -> float:
+    """把「加载权重 + 捕获 CUDA graph」两段都跑掉，返回耗时（秒）。
+
+    只 ``load_model`` 是不够的：CUDA graph 是在**第一次 generate** 时才捕获的，
+    那一段十几秒——不预热的话，用户点的第一单依旧要等这么久，正是
+    「启动即加载」想省掉的那段。
+
+    预热用的文本压到最短（max_new_tokens=32，不到 3 秒音频），只要走完一次
+    完整路径就能让图和缓存就位。副作用是顺手把「音色库第一个音色」的 prompt
+    带进内核缓存，对此后的生成只有好处。
+    """
+    t0 = time.time()
+    size = cfg.resolve_size(size or None)
+    model = load_model(kind, size)
+    try:
+        with _GPU_LOCK:
+            if kind == "clone":
+                names = voices_mod.list_voices()
+                if not names:
+                    return time.time() - t0   # 没音色就没法预热，权重加载已经够本
+                v = voices_mod.load_voice(names[0]) or {}
+                audio = v.get("audio_path")
+                if not audio:
+                    return time.time() - t0
+                model.generate_voice_clone(
+                    text="你好。", language="Chinese", ref_audio=str(audio),
+                    ref_text=v.get("ref_text") or "",
+                    xvec_only=bool(v.get("xvec_only", cfg.CLONE_XVEC_ONLY)),
+                    max_new_tokens=32,
+                )
+            elif kind == "official":
+                model.generate_custom_voice(
+                    text="你好。", speaker="vivian", language="Chinese",
+                    max_new_tokens=32,
+                )
+            else:  # design 没有稳定的最小输入，权重加载到这儿就算完
+                pass
+    except Exception:  # noqa: BLE001  预热失败不该让启动失败，生成时照常重试
+        pass
+    return time.time() - t0

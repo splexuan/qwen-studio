@@ -289,12 +289,17 @@ def rows() -> list[dict]:
     for n in list_voices():
         dur = duration_of(n)
         ref = _read_ref_text(n)
+        wav = path_of(n, WAV_EXT)
         out.append({
             "name": n,
             "duration": dur,
             "chars": len(ref),
             "ref_text": ref,
             "has_prompt": path_of(n, BIO_EXT).exists(),
+            # 音频文件的修改时间（秒）。前端拿它当 URL 的版本号：
+            # 同一个音色名换了音频，URL 一变浏览器就会重新取，不会拿着旧的放。
+            # 只靠 Cache-Control 不够 —— 老客户端、直接贴链接、反向代理都可能自己缓存。
+            "mtime": int(wav.stat().st_mtime) if wav.exists() else 0,
             "length_hint": (
                 "偏短" if 0 < dur < REF_MIN_SECS
                 else "偏长" if dur > REF_GOOD_MAX_SECS

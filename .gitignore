@@ -50,3 +50,8 @@ desktop.ini
 /_packtest*/
 /_selftest*/
 /_*.bin
+
+# 基准/验证脚本的产物目录（tools/bench_stream.py 等会往里写 wav 和 json）
+tools/_bench/
+# WorkBuddy 自己的会话数据（不是项目内容）
+.workbuddy-ai/

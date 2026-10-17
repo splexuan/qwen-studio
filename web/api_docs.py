@@ -150,6 +150,27 @@ ENDPOINTS: list[dict] = [
         "params": [("jid", "str", "任务 id")],
     },
     {
+        "method": "POST", "path": "/api/tts/stream", "group": "合成",
+        "desc": (
+            "流式合成：一条 SSE 连接从提交到收尾，边生成边推音频块（RTF<1，"
+            "播放不会断）。事件依次为 meta / 多条 pcm / done；出错推 error。"
+            "pcm 的 data 是 base64 的 float32 小端裸采样，采样率见 meta.sr。"
+            "不支持流式的组合（剧本、声音设计、多人对话）返回 409 且 fallback=true，"
+            "调用方应改走 /api/jobs。收尾会和普通任务一样落盘并记一条合成记录。"
+        ),
+        "params": [
+            ("mode", "str", "clone | official（其余模式不支持）"),
+            ("text", "str", "要合成的文本"),
+            ("language", "str?", "Auto / Chinese / English / …"),
+            ("size", "str?", "1.7B | 0.6B，缺省用档位默认"),
+            ("instruct", "str?", "情感或风格指令"),
+            ("voice", "str?", "mode=clone 时的音色库名字"),
+            ("ref_upload", "str?", "mode=clone 时用刚上传的临时音频"),
+            ("speaker", "str?", "mode=official 时的官方说话人 key"),
+            ("chunk_size", "int?", "每块多少 codec 步，默认 8（约 0.67 秒音频）"),
+        ],
+    },
+    {
         "method": "POST", "path": "/api/speakers/{name}/preview", "group": "合成",
         "desc": "官方说话人的试听样例。样例得真跑一次模型才有，所以**缓存命中就直接给 url**；"
                 "没命中才排后台任务并返回 job，用 /api/jobs/{id} 轮询 —— 响应里 url 与 job 必有其一。"
