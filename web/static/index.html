@@ -688,13 +688,9 @@ html[data-theme="dark"] .btn--danger:hover{color:var(--bg)}
 .hrow__voice{font-size:13.5px; font-weight:650}
 .hrow__instr{font-size:12px; color:var(--text-3)}
 .hrow__time{margin-left:auto; font-size:12px; color:var(--text-3); white-space:nowrap}
-.hrow__meta{display:flex; align-items:center; gap:16px; flex-wrap:wrap;
-  margin-top:9px; font-size:12px; color:var(--text-3)}
+.hrow__meta{display:flex; align-items:center; gap:6px 16px; flex-wrap:wrap;
+  margin-top:9px; font-size:12px; color:var(--text-2)}
 .hrow__meta span{white-space:nowrap}
-.hrow__params{display:flex; flex-wrap:wrap; gap:7px 16px; margin-top:10px; font-size:12px}
-.hrow__params span{display:inline-flex; align-items:baseline; gap:5px; white-space:nowrap}
-.hrow__params i{font-style:normal; color:var(--text-3)}
-.hrow__params b{font-weight:600; color:var(--text-2)}
 .hrow__text{margin:9px 0 0; font-size:13.5px; line-height:1.65;
   display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden}
 .hrow.err .hrow__text{color:var(--err)}
@@ -2260,8 +2256,8 @@ async function runJob(payload, R) {
     if (R) paintResult(R, {
       url: res.url, file: res.file, duration: res.duration, level: res.level,
       message: st.message, params: payload,
-      // 从提交到出结果的整段等待（含排队 + 可能的权重加载），不是音频长度
-      took: (Date.now() - t0) / 1000,
+      // 用服务端报的合成耗时（和合成记录里那个数一致）；老服务端没这个字段时退回前端掐的
+      took: res.took ?? (Date.now() - t0) / 1000,
     });
     toast("生成完成", "ok");
     return { ok: true, res, message: st.message };
@@ -4052,13 +4048,6 @@ function histTextPreview(t) {
   return s.length > HIST_TEXT_IN_ROW ? s.slice(0, HIST_TEXT_IN_ROW) + "…" : s;
 }
 
-function histParamsInline(it) {
-  const pairs = paramPairs(it).filter(([k]) => k !== "音色" && k !== "说话人" && k !== "模式");
-  if (!pairs.length) return "";
-  return `<div class="hrow__params">`
-    + pairs.map(([k, v]) => `<span><i>${esc(k)}</i><b>${esc(v)}</b></span>`).join("") + `</div>`;
-}
-
 function renderHistory() {
   const host = $("#h-host");
   const items = _lastHistory;
@@ -4116,6 +4105,22 @@ function renderHistory() {
   });
 }
 
+/* 合成记录每条的第二行：「这次用了什么」—— 跟结果卡的「本次参数」同一套口径，
+   全部带标签，免得出现"0.6B / Auto"这种没有主语的值。
+   以前规格和语种在 hrow__meta 里裸着出现一次、又在 histParamsInline 里带标签出现一次，
+   同一件事说两遍；现在只留这一处。 */
+function histMetaHTML(it) {
+  const out = [`规格 ${sizeLabel(it.size)}`, `语种 ${it.language || "Auto"}`];
+  if (it.mode === "clone" && it.xvec_only != null) {
+    out.push(`克隆方式 ${it.xvec_only ? "仅说话人向量" : "完整 ICL（含参考韵律）"}`);
+  }
+  if (it.mode === "script" && it.gap_secs != null) out.push(`段间静音 ${it.gap_secs} s`);
+  out.push(it.duration ? `音频 ${fmtDur(it.duration)}` : "音频 —");
+  out.push(`${it.chars || 0} 字`);
+  if (it.took) out.push(`耗时 ${it.took.toFixed(1)} s`);
+  return out;
+}
+
 function histRowHTML(it) {
   const mode = MODE_LABEL[it.mode] || it.mode || "—";
   const gone = !it.file_exists;
@@ -4130,15 +4135,10 @@ function histRowHTML(it) {
       ${it.instruct ? `<span class="hrow__instr">· ${esc(it.instruct.slice(0, 40))}${it.instruct.length > 40 ? "…" : ""}</span>` : ""}
       <span class="hrow__time">${esc(it.ts || "")}</span>
     </div>
-    <div class="hrow__meta">
-      <span>${esc(sizeLabel(it.size))}</span>
-      <span>${esc(it.language || "Auto")}</span>
-      <span>${it.duration ? fmtDur(it.duration) : "—"}</span>
-      <span>${it.chars || 0} 字</span>
+    <div class="hrow__meta">${histMetaHTML(it).map((t) => `<span>${esc(t)}</span>`).join("")}
       ${err ? `<span style="color:var(--err);font-weight:600">生成失败</span>`
             : gone ? `<span style="color:var(--warn)">音频已被清理</span>` : ""}
     </div>
-    ${histParamsInline(it)}
     <p class="hrow__text">${esc(histTextPreview(it.text))}</p>
     <div class="hrow__acts">
       ${it.file_exists ? `<button class="btn btn--outline btn--sm" data-role="play">试听</button>` : ""}

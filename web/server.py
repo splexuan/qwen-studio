@@ -450,10 +450,14 @@ def _run_job(jid: str, kind: str, p: dict) -> None:
         _job_set(jid, state="running", progress=0.1,
                  message="正在准备模型 —— 首次使用该规格要加载权重并预热 CUDA graph，"
                          "通常十几到几十秒。")
+        t_synth = time.time()
         wav, sr, status, level = core.synthesize(p)
+        # 生成耗时：合成记录和结果卡显示的是同一个数（之前记录里根本没有这项，
+        # 结果卡的耗时是前端掐的，两边对不上）
+        took = round(time.time() - t_synth, 2)
         if level == "error":
             _job_set(jid, state="error", message=status, progress=1.0)
-            history_mod.add({**p, "status": "error", "file": "", "duration": 0})
+            history_mod.add({**p, "status": "error", "file": "", "duration": 0, "took": took})
             return
 
         _job_set(jid, message="正在写入音频…", progress=0.92)
@@ -462,7 +466,7 @@ def _run_job(jid: str, kind: str, p: dict) -> None:
         fname = core.save_wav(wav, sr, tag)
         dur = round(len(wav) / sr, 2) if sr else 0.0
         head = status.splitlines()[0] if status else ""
-        history_mod.add({**p, "status": level, "file": fname, "duration": dur})
+        history_mod.add({**p, "status": level, "file": fname, "duration": dur, "took": took})
 
         _job_set(
             jid, state="done", progress=1.0,
@@ -470,6 +474,7 @@ def _run_job(jid: str, kind: str, p: dict) -> None:
             result={
                 "file": fname, "url": f"/media/out/{fname}",
                 "duration": dur, "level": level,
+                "took": took,            # 与合成记录同一个数
                 "headline": head,
             },
         )

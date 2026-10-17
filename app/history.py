@@ -72,6 +72,11 @@ def add(entry: dict) -> dict:
         "chars": len(entry.get("text") or ""),
         "file": entry.get("file", ""),
         "duration": entry.get("duration", 0.0),
+        # 生成耗时（服务端掐的合成时间）、克隆方式、段间静音 —— 都属于"这次用了什么"，
+        # 合成记录里要能查到，别只能看结果卡那一张
+        "took": round(float(entry.get("took") or 0), 2),
+        "xvec_only": entry.get("xvec_only"),
+        "gap_secs": entry.get("gap_secs"),
         "status": entry.get("status", "ok"),
     }
     with _LOCK:
