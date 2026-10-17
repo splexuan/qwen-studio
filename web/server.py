@@ -35,12 +35,13 @@ DOM 结构上反复与你抢控制权（哈希类名随版本变、注入的 CSS
 
 启动：
     runtime\\python.exe web\\server.py
-    或  run_web.bat
+    或  启动程序.bat
 """
 
 from __future__ import annotations
 
 import shutil
+import socket
 import sys
 import threading
 import time
@@ -100,11 +101,30 @@ def api_hardware():
     }
 
 
+def _lan_ip() -> str:
+    """本机的局域网 IPv4。
+
+    用 UDP "连接" 8.8.8.8 让系统选默认出口 —— **不会真的发出任何包**，
+    拿的是默认路由所在那块网卡的地址。比按地址段猜靠谱得多：
+    按地址段猜会挑中 WSL / 虚拟网卡的 172.x.x.x，朋友拿那个地址肯定连不上。
+    取不到（比如完全离线的机器）就返回空字符串，界面上不显示这一行。
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+    except OSError:
+        return ""
+    finally:
+        s.close()
+
+
 @app.get("/api/bootstrap")
 def api_bootstrap():
     p = cfg.profile()
     missing = cfg.missing_models()
     asr_ok, asr_why = asr_mod.available()
+    lan_ip = _lan_ip()
     return {
         "ok": True,
         # 对方是拿 GitHub 的 zip 手动覆盖更新的，这一行是他们唯一能看出
@@ -124,6 +144,14 @@ def api_bootstrap():
             "vram_gib": p.vram_gib,
             "default_size": p.default_size,
             "is_gpu": p.is_gpu,
+        },
+        # 局域网访问：界面「系统设置 → 版本与端点」要把这个地址显示出来，
+        # 用户得知道该把哪个地址发给朋友
+        "net": {
+            "host": cfg.HOST,
+            "port": cfg.PORT,
+            "lan_url": (f"http://{lan_ip}:{cfg.PORT}" if lan_ip else ""),
+            "local_url": f"http://127.0.0.1:{cfg.PORT}",
         },
         "languages": cfg.LANGUAGES,
         "sizes": list(cfg.SIZES),
@@ -636,7 +664,14 @@ def main() -> int:
     missing = cfg.missing_models()
     print("=" * 66)
     print("  Qwen3-TTS Studio")
-    print(f"  界面  http://{cfg.HOST}:{cfg.PORT}")
+    # 监听 0.0.0.0 时不能把「0.0.0.0」当地址印出来 —— 那是通配符，
+    # 复制到浏览器里打不开。换成真内网 IP（取不到就明说，别印个废地址）。
+    if cfg.HOST in ("0.0.0.0", "::"):
+        lan = _lan_ip()
+        print(f"  本机      http://127.0.0.1:{cfg.PORT}")
+        print(f"  局域网    {f'http://{lan}:{cfg.PORT}' if lan else '（没取到内网 IP，用 ipconfig 查）'}")
+    else:
+        print(f"  本机      http://{cfg.HOST}:{cfg.PORT}")
     print(f"  档位  {p.short()}")
     print(f"  音色  {len(voices_mod.list_voices())} 个 · 输出 {cfg.OUTPUT_DIR}")
     if missing:

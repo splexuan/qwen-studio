@@ -167,7 +167,12 @@ HISTORY_MAX = 300
 # WebUI（web/server.py 读取；改这里即可换监听地址与端口）
 # 端口选 7867：与 omnivoice-studio 的 7866、原整合包的 7869 都错开。
 # 也支持环境变量覆盖 —— 「7867 被占了想临时换个端口」不必改源码：
-#     set QWENSTUDIO_PORT=7877 && run_web.bat
+#     set QWENSTUDIO_PORT=7877 && 启动程序.bat
+#
+# 监听地址默认 **127.0.0.1**：只有这台机器能打开。
+# 想让同一 Wi-Fi 下的朋友/手机访问，双击「启动程序-局域网.bat」（它会设成 0.0.0.0）；
+# 也可以手动：set QWENSTUDIO_HOST=0.0.0.0 && 启动程序.bat
+# 注意开放后**服务没有密码** —— 同网络的人能生成语音、读音色库、删合成记录。
 HOST = os.environ.get("QWENSTUDIO_HOST", "127.0.0.1").strip() or "127.0.0.1"
 try:
     PORT = int(os.environ.get("QWENSTUDIO_PORT", "7867"))

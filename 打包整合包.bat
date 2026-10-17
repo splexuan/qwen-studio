@@ -3,7 +3,7 @@ rem ============================================================================
 rem  Qwen3-TTS Studio 整合包打包器
 rem
 rem  编码说明（重要）：本文件必须 **GBK 编码 + CRLF 换行**，别加 chcp 65001。
-rem  理由同 run_web.bat：UTF-8 的中文在 cmd 里会被按 GBK 解读，中文路径被截断。
+rem  理由同 启动程序.bat：UTF-8 的中文在 cmd 里会被按 GBK 解读，中文路径被截断。
 rem  改这个文件请用 Python 以 encoding="gbk" 写回，别用普通编辑器存成 UTF-8。
 rem
 rem  真正干活的还是 tools\pack_release.py，这里只是把常用组合摆成菜单。
@@ -14,7 +14,7 @@ cd /d "%~dp0"
 set "PY=%~dp0runtime\python\python.exe"
 set "PACK=%~dp0tools\pack_release.py"
 
-rem ---- 跟 run_web.bat 保持一致的环境 ----
+rem ---- 跟 启动程序.bat 保持一致的环境 ----
 set "PYTHONPATH="
 set "PYTHONUTF8=1"
 set "PYTHONIOENCODING=utf-8"

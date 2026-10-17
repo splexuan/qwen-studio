@@ -4520,11 +4520,17 @@ async function renderSettings() {
   $("#set-env-notes").innerHTML = (h.notes || []).map((n) => noteHTML(n, "info")).join("")
     || noteHTML("没有需要特别说明的适配项。", "ok");
 
+  const net = BOOT.net || {};
   const ver = [
     ["代码版本", BOOT.version || "未标记"],
     ...(BOOT.pack_stamp ? [["打包标记", BOOT.pack_stamp]] : []),
     ["自动转写", BOOT.asr?.available ? "可用" : `不可用（${BOOT.asr?.reason || "原因未知"}）`],
     ["服务端点", location.origin],
+    // 局域网地址 = 该发给朋友的地址。没开放（HOST=127.0.0.1）或取不到内网 IP 时直说，
+    // 别让人对着一个连不上的地址去折腾。
+    net.host === "127.0.0.1"
+      ? ["局域网访问", "未开放（只允许本机）"]
+      : ["局域网访问", net.lan_url || "已开放，但没取到本机内网 IP（可用 ipconfig 查）"],
   ];
   $("#set-ver").innerHTML = ver.map(([k, v]) =>
     `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join("");
@@ -4608,7 +4614,7 @@ async function boot() {
     if (BOOT.pack_stamp) $("#env-version").textContent += ` ｜ 打包于 ${BOOT.pack_stamp}`;
   } catch (e) {
     $("#boot").innerHTML = `<b>启动失败</b><br>${esc(e.message)}<br>
-      <span style="font-size:12px">请确认后端已启动（run_web.bat），再刷新本页。</span>`;
+      <span style="font-size:12px">请确认后端已启动（启动程序.bat），再刷新本页。</span>`;
     return;
   }
   syncVoiceCache();

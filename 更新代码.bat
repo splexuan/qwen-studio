@@ -29,6 +29,6 @@ set "CODE=%ERRORLEVEL%"
 
 echo.
 if not "%CODE%"=="0" echo [没更新成功] 退出码 %CODE% ，看上面的说明。
-echo 更新完记得重新启动 run_web.bat。
+echo 更新完记得重新启动 启动程序.bat。
 pause
 exit /b %CODE%

@@ -11,7 +11,7 @@ Qwen3-TTS（千问语音合成）的本地工作台：**语音克隆 / 声音设
 ## 快速开始
 
 ```
-双击 run_web.bat
+双击 启动程序.bat
 ```
 
 浏览器打开 **http://127.0.0.1:7867** 。首次生成要加载权重并预热 CUDA graph，慢一次（实测约 15 秒），
@@ -31,7 +31,7 @@ Qwen3-TTS（千问语音合成）的本地工作台：**语音克隆 / 声音设
 
 ```
 qwen-studio/
-├─ run_web.bat            启动 WebUI（GBK + CRLF 编码，别改编码）
+├─ 启动程序.bat            启动 WebUI（GBK + CRLF 编码，别改编码）
 ├─ 自检.bat               环境自检
 ├─ app/                   纯逻辑层：不依赖 FastAPI，可单独 import 或跑 CLI
 │  ├─ config.py           全局配置：路径、5 套权重的 功能×规格 映射、运行参数
@@ -349,7 +349,7 @@ NVIDIA GeForce RTX 3060 Laptop GPU · 6.0 GiB · bfloat16 · 默认 1.7B
 | 「缺少权重」 | `models/` 下对应目录不存在 |
 | 转写按钮灰色不可用 | 悬停看 `title`，里面写明了缺哪一样（`sherpa-onnx` 或 `models/sensevoice-small/` 权重）；补上即可，或手工填参考文本 |
 | 卡片上一直是「无基因」 | 保存后基因是**后台**生成的，等十几秒；若提示失败，点卡片上的「生成音色基因」重试即可（有没有基因不影响生成结果） |
-| 端口被占 | 用环境变量换端口：`set QWENSTUDIO_PORT=7877 && run_web.bat`（或改 `app/config.py` 的 `PORT`） |
+| 端口被占 | 用环境变量换端口：`set QWENSTUDIO_PORT=7877 && 启动程序.bat`（或改 `app/config.py` 的 `PORT`） |
 | RTF 很高 | 首次调用含加载与 CUDA graph 预热（实测冷启动 RTF 2.17）；热路径应为 0.66 左右 |
 
 跑一遍接口测试（需服务在运行）：
@@ -378,10 +378,10 @@ runtime\python\python.exe tools\bench.py 御姐   # 冷热路径与 RTF 基准
 
 ## 启动与端口
 
-双击 `run_web.bat` 即可，**浏览器会自动打开**（先派后台助手轮询端口，确认服务真的
+双击 `启动程序.bat` 即可，**浏览器会自动打开**（先派后台助手轮询端口，确认服务真的
 起来了才开页签，不靠固定 sleep 猜时间）。不想自动开：`set QWENSTUDIO_NO_BROWSER=1`。
 
-换端口：`set QWENSTUDIO_PORT=7877 && run_web.bat` —— 横幅和自动打开的地址都会跟着走。
+换端口：`set QWENSTUDIO_PORT=7877 && 启动程序.bat` —— 横幅和自动打开的地址都会跟着走。
 
 ---
 
@@ -413,7 +413,7 @@ amend 会把上一次提交的哈希改掉，标记里那个哈希当场失效�
 
 ## 打包分发给别人
 
-整个工作台自带运行时和权重，**解压到任何路径双击 `run_web.bat` 就能跑** ——
+整个工作台自带运行时和权重，**解压到任何路径双击 `启动程序.bat` 就能跑** ——
 代码里没有一处写死的绝对路径，运行时（WinPython）也没有 `pyvenv.cfg` / `._pth`
 这类会绑死安装位置的锚点。
 
@@ -458,7 +458,7 @@ web/_preview/    官方说话人试听缓存
 runtime\python\python.exe tools\pack_release.py --hardlink --name _selftest
 ```
 
-然后把它挪到项目**外面**的另一个路径，双击 `run_web.bat` 看能不能起来。
+然后把它挪到项目**外面**的另一个路径，双击 `启动程序.bat` 看能不能起来。
 （硬链接版**只能自测**：文件本体还在你这块盘上，发给别人是断链。）
 
 ---

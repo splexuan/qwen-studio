@@ -35,7 +35,7 @@ CODE_DIRS = ["app", "tools", "web/static"]
 CODE_FILES = [
     "web/server.py", "web/api_docs.py",
     "README.md", "操作教程.md",
-    "run_web.bat", "自检.bat", "打包整合包.bat", "更新代码.bat",
+    "启动程序.bat", "启动程序-局域网.bat", "自检.bat", "打包整合包.bat", "更新代码.bat",
 ]
 # ---- 绝对不碰的东西（列出来是为了让你确认，不是在代码里删）----
 KEEP_DIRS = ["voices", "outputs", "models", "runtime", "vendor", "dist",
@@ -107,7 +107,7 @@ def main() -> int:
 
     if not looks_like_code(ROOT):
         print(f"[错误] {ROOT} 里没有 app/core.py，看起来不是安装目录。")
-        print("       请把本脚本放在 run_web.bat 同一个目录下运行。")
+        print("       请把本脚本放在 启动程序.bat 同一个目录下运行。")
         return 1
 
     zp = find_zip(args.zip)
@@ -209,7 +209,7 @@ def main() -> int:
     print(f"\n  用时 {time.time() - t0:.1f}s")
     print("\n  没动过：weights（models/）、便携运行时（runtime/）、ffmpeg（vendor/bin/）、")
     print("          你的音色库（voices/）、生成记录（outputs/）")
-    print("\n  下一步：关掉旧服务（如果还开着），双击 run_web.bat 重新启动。")
+    print("\n  下一步：关掉旧服务（如果还开着），双击 启动程序.bat 重新启动。")
     print("  启动后点左下角那枚「运行环境」芯片，最下面一行就是新的代码版本号。")
     return 0
 

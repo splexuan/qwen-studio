@@ -8,7 +8,7 @@
     vendor/     ffmpeg 与加速推理内核（都在 config.py 里按相对路径注入）
     runtime/    便携 Python（含 torch，8 G）
     models/     5 套权重（18 G，可用 --no-models 剔掉）
-    run_web.bat / 自检.bat / README.md / 操作教程.md
+    启动程序.bat / 自检.bat / README.md / 操作教程.md
 
 **绝不带出去的**（这是个人的使用痕迹，不是软件的一部分）：
     voices/     自己录/存下来的音色
@@ -45,7 +45,7 @@ ROOT = Path(__file__).resolve().parent.parent
 TOP_DIRS = ["app", "web", "vendor", "runtime", "models", "tools"]
 
 # 顶层单个文件，缺了也能跑，但没有说明文档对方会一脸茫然
-TOP_FILES = ["run_web.bat", "自检.bat", "打包整合包.bat", "更新代码.bat",
+TOP_FILES = ["启动程序.bat", "启动程序-局域网.bat", "自检.bat", "打包整合包.bat", "更新代码.bat",
              "README.md", "操作教程.md"]
 
 # 内容一律不带、但**目录要建出来**的：第一次启动时程序自己也会建，
@@ -156,7 +156,7 @@ def write_notes(dest: Path, include_models: bool, items: list[tuple[Path, Path]]
 ----------
 1. 把整个文件夹解压到一个**英文短路径**下，例如  D:\\qwen-studio
    （路径里有中文一般也能跑，但少数杀毒软件和驱动会在这上面出幺蛾子）
-2. 双击  run_web.bat
+2. 双击  启动程序.bat
 3. **浏览器会自己打开** http://127.0.0.1:7867
    （它是在确认服务真的起来之后才开的，不会开出「无法连接」的页面。
      不想自动开就先设 QWENSTUDIO_NO_BROWSER=1）
@@ -175,11 +175,11 @@ def write_notes(dest: Path, include_models: bool, items: list[tuple[Path, Path]]
 --------
 整合包里的**代码**会跟着版本走，权重和运行时一辈子不变，所以更新很轻：
 
-1. 关掉 run_web.bat
+1. 关掉 启动程序.bat
 2. 从项目主页下载最新的代码 zip（就是仓库页的 Download ZIP，几百 KB）
 3. 双击  更新代码.bat  —— 它把代码盖到安装目录上，并清掉新版本里已经不存在的旧文件。
    你的音色库（voices）、生成记录（outputs）、权重、运行时都不动。
-4. 重新双击 run_web.bat。点左下角那枚「运行环境」芯片，最下面一行就是新的代码版本号。
+4. 重新双击 启动程序.bat。点左下角那枚「运行环境」芯片，最下面一行就是新的代码版本号。
 
 第一次用建议看  操作教程.md
 --------------------------
@@ -190,7 +190,7 @@ def write_notes(dest: Path, include_models: bool, items: list[tuple[Path, Path]]
 --------
 * 端口被占：先设环境变量再启动，例如  set QWENSTUDIO_PORT=7877
 * 杀毒软件拦截：便携版 Python + ffmpeg 容易被误报，加白名单即可。
-* 双击 run_web.bat 一闪而过：说明 Python 运行时没找着，确认 runtime\\ 目录完整。
+* 双击 启动程序.bat 一闪而过：说明 Python 运行时没找着，确认 runtime\\ 目录完整。
 * 音色库是空的：这是正常的 —— 你自己的音色不会跟着软件走。
   想快速试，可以去「官方音色」页（9 个内置说话人，开箱可用），
   或者照 操作教程.md 里「新增音色」那段存一个自己的。
