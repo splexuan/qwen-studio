@@ -13,9 +13,10 @@
 自动决出的关键项：
 
 ==================  ==========================================================
-``dtype``           Ampere 及更新（算力 ≥ 8.0）用 **bfloat16**（数值更稳、
-                    不易溢出）；更老的 N 卡用 **float16**；算力 < 6.0、
-                    MPS、CPU 用 **float32**（fp16 在 CPU 上反而更慢且易 NaN）
+``dtype``           N 卡一律优先 **bfloat16**（数值稳、不易溢出）；只有
+                    Pascal 及更老（算力 < 7.0，torch 上 bf16 内核不可用）
+                    与 MPS、CPU 才用 **float32**（fp16 在 CPU 上反而更慢且易 NaN）
+                    —— **不再给任何卡选 float16**，原因见 :func:`_pick_dtype`
 ``default_size``    显存 ≥ 6 GiB 给 **1.7B**（音质与控制力上限），
                     更小或纯 CPU 给 **0.6B**（省显存、吞吐高）
 ``script_chunk_chars`` 长剧本单次送入的字数上限：显存越小给得越少，
@@ -217,14 +218,25 @@ class Profile:
 # 自动决策规则
 # ---------------------------------------------------------------------------
 def _pick_dtype(backend: str, cc_major: int, requested: str) -> str:
+    """决定精度。
+
+    **为什么 N 卡不再选 float16（2026-10-17 实测）**：
+    Qwen3-TTS 是照 bfloat16 训的，激活值动态范围大。在 GTX 1650（算力 7.5，
+    会自动落到 float16）上实测：code predictor 第 2 层的 MLP 输出冲出
+    fp16 上限 65504 → inf；紧接的 RMSNorm 做 `x * rsqrt(var)`，`inf * 0`
+    得到 NaN → 采样时 `softmax` 全 NaN → `torch.multinomial` 命中
+    device-side assert（`TensorCompare.cu:112 Assertion input[0] != 0 failed`）
+    → CUDA 上下文作废，进程被 0xC0000005 直接干掉（界面上就是「生成即闪退」）。
+    fp16 在这套权重上不是「精度低一点」，是**跑不起来**，所以整条 N 卡路径
+    统一改用 bfloat16：Turing/Volta 没有原生 bf16，靠 fp32 模拟会慢一些，
+    但结果是正确的 —— 正确优先于快。
+    """
     if requested and requested != "auto":
         return requested
     if backend == "cuda":
-        if cc_major >= 8:          # Ampere / Ada / Hopper / Blackwell
+        if cc_major >= 7:          # Volta / Turing / Ampere / Ada / Hopper / Blackwell
             return "bfloat16"
-        if cc_major >= 6:          # Pascal / Turing / Volta
-            return "float16"
-        return "float32"           # Maxwell 等老卡，fp16 支持残废
+        return "float32"           # Pascal 及更老：torch 的 bf16 内核不可用
     if backend == "xpu":
         return "float16"
     if backend == "mps":
@@ -268,6 +280,11 @@ def _collect_notes(p: Profile) -> list[str]:
 
     if p.backend == "cuda":
         notes.append(f"已启用 GPU 加速（{p.device_name}，{p.vram_gib:.1f} GiB，{p.dtype}）。")
+        if p.dtype == "bfloat16" and p.compute_cap and p.compute_cap.split(".")[0].isdigit() \
+                and int(p.compute_cap.split(".")[0]) < 8:
+            notes.append(f"本卡（算力 {p.compute_cap}）没有原生 bfloat16，是拿 fp32 模拟的，"
+                         "生成会慢一些；但这类卡的 float16 会让本模型数值溢出（实测直接崩），"
+                         "所以精度上只能选 bf16。想要更快只能换卡。")
         if p.vram_gib < 6:
             notes.append("显存偏小：已默认选 0.6B 规格。1.7B 需要约 6 GiB，"
                          "强上会在加载或生成时 OOM。")
