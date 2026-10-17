@@ -52,6 +52,11 @@
   --warn:#A26800;  --warn-soft:#FDF3E0; --warn-line:#F0DAB0;
   --err:#D2414E;   --err-soft:#FDECEE;  --err-line:#F4C7CC;
   --info:#2E6CD8;  --info-soft:#EAF1FD; --info-line:#C6D9F6;
+  /* 语义色的「文字版」。主色是给色块、图标、边框用的；拿它当 12.5px 正文会发虚
+     （--ok 压在自己的 --ok-soft 上只有 3.2:1）。提示条里的标题文字统一用这几个，
+     对各自浅底都在 5:1 以上。规则跟上面 --ink-role / --ink-inst 那对是一致的。 */
+  --ok-ink:#0B7A4E; --warn-ink:#8A5A00; --err-ink:#B3303C; --info-ink:#2456B0;
+  --hint:#5B6377;   /* 输入框下方那类辅助说明：比 --text-3 深一档，读得清又不抢戏 */
   /* —— 圆角 —— */
   --r-xs:6px; --r-sm:9px; --r:12px; --r-lg:16px; --r-xl:22px; --r-full:999px;
   /* —— 阴影 —— */
@@ -80,11 +85,17 @@ html[data-theme="dark"]{
   --warn:#E0B063;  --warn-soft:#271E0D; --warn-line:#463614;
   --err:#F0949C;   --err-soft:#291413;  --err-line:#4E2526;
   --info:#8FB5EC;  --info-soft:#101B2B; --info-line:#22354E;
+  /* 深色底上语义主色本身对比就够（都在 8:1 以上），文字版只再提亮一点点，
+     保持「图标/色条亮、正文不刺眼」这个关系跟亮色一致 */
+  --ok-ink:#6FD3A1; --warn-ink:#E8C078; --err-ink:#F5A6AD; --info-ink:#9FC1F2;
+  --hint:#939CB1;
   --sh-1:0 1px 2px rgba(0,0,0,.4);
   --sh-2:0 2px 6px rgba(0,0,0,.4), 0 12px 28px -14px rgba(0,0,0,.7);
   --sh-3:0 24px 60px -20px rgba(0,0,0,.8);
 }
 *{box-sizing:border-box}
+/* [hidden] 必须压过 .btn / .pill 这些自带 display 的组件，否则 JS 里 el.hidden = true 不生效 */
+[hidden]{display:none !important}
 html,body{height:100%}
 body{
   margin:0; background:var(--bg); color:var(--text);
@@ -96,6 +107,8 @@ button,input,select,textarea{font:inherit; color:inherit}
 a{color:var(--accent); text-decoration:none}
 .hidden{display:none !important}
 .sp{margin-left:auto}
+/* 卡片头右侧的动作组（按钮 + 状态胶囊） */
+.card__act{margin-left:auto; display:flex; align-items:center; gap:8px}
 :focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:var(--r-xs)}
 ::selection{background:var(--accent-soft-2)}
 
@@ -131,28 +144,87 @@ a{color:var(--accent); text-decoration:none}
 .nav__sep{height:1px; background:var(--line); margin:9px 6px}
 
 .sidebar__foot{margin-top:auto; padding-top:12px; display:flex; flex-direction:column; gap:8px}
+/* 侧栏底部：运行环境芯片（点开是「运行环境 / 排错」抽屉）
+   三栏：圆点（固定 9px 一列）+ 文字（可伸缩、超长省略）+ 箭头（固定）。
+   文字列 flex:1 + min-width:0，所以标题再长也只会自己省略，不会把箭头挤走。
+   副标题由 JS 拼「设备 · 精度 · 显存」，缺哪项就不加哪项 ——
+   避免拼出只剩一个「·」的悬空分隔符（之前 device_name 没传到前端就是这个下场）。 */
 .envchip{
-  display:flex; align-items:center; gap:9px; width:100%; cursor:pointer; text-align:left;
+  display:flex; align-items:center; gap:8px; width:100%; text-align:left; cursor:pointer;
   appearance:none; border:1px solid var(--line); background:var(--surface-2);
-  border-radius:var(--r-sm); padding:9px 10px; transition:border-color .14s, background .14s;
+  border-radius:var(--r-sm); padding:8px 9px 8px 10px;
+  transition:border-color .16s, background .16s, box-shadow .16s;
 }
-.envchip:hover{border-color:var(--line-2); background:var(--surface-3)}
-.dot{flex:0 0 auto; width:8px; height:8px; border-radius:50%; background:var(--ok);
+.envchip:hover{border-color:var(--line-2); background:var(--surface-3); box-shadow:var(--sh-1)}
+.envchip:focus-visible{outline:none; box-shadow:var(--ring)}
+.envchip__dot{flex:0 0 auto; width:9px; display:grid; place-items:center}
+.dot{width:7px; height:7px; border-radius:50%; background:var(--ok);
   box-shadow:0 0 0 3px color-mix(in srgb, var(--ok) 20%, transparent)}
 .dot.cpu{background:var(--warn); box-shadow:0 0 0 3px color-mix(in srgb, var(--warn) 20%, transparent)}
-.envchip__t{min-width:0}
-.envchip__t b{display:block; font-size:12px; font-weight:600; color:var(--text)}
-.envchip__t span{display:block; font-size:11px; color:var(--text-3);
+.envchip__t{flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:1px}
+.envchip__t b{font-size:12.5px; font-weight:600; line-height:1.3; color:var(--text);
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.envchip__t span{font-size:11px; line-height:1.35; color:var(--text-3);
+  font-variant-numeric:tabular-nums;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.envchip__chev{flex:0 0 auto; color:var(--text-3); opacity:.7;
+  transition:transform .16s ease, opacity .16s ease}
+.envchip:hover .envchip__chev{transform:translateX(2px); opacity:1}
 .iconbtn{
   width:38px; height:38px; flex:0 0 auto; display:grid; place-items:center; cursor:pointer;
   background:var(--surface); border:1px solid var(--line); border-radius:var(--r-sm);
   color:var(--text-2); transition:background .14s, border-color .14s, color .14s;
 }
 .iconbtn:hover{background:var(--surface-2); color:var(--text); border-color:var(--line-2)}
+/* 顶栏里那枚齿轮：28px，跟旁边 28px 高的下拉对齐 */
+.iconbtn--sm{width:28px; height:28px; border-radius:7px; background:transparent;
+  border-color:transparent; color:var(--text-2)}
+.iconbtn--sm:hover{color:var(--text); background:var(--surface-2); border-color:var(--line)}
 
 .main{min-width:0; display:flex; flex-direction:column}
 .content{flex:1; padding:0 34px 72px; max-width:1400px; width:100%; margin:0 auto}
+
+/* ============================ 工作台顶栏 ============================
+   应用级 chrome：左边是当前位置，右边是「语种 / 规格」就地可改、模型驻留状态、
+   系统设置入口。sticky 在内容区上方 —— 左栏很长，滚下去的时候这两样不该跟着滚走。
+   一条 52px 的实色栏 + 一条分隔线就够，不要卡片，它本身不是内容区块。 */
+.topbar{position:sticky; top:0; z-index:40; background:var(--surface);
+  border-bottom:1px solid var(--line)}
+.topbar__in{max-width:1400px; margin:0 auto; padding:0 34px; height:52px;
+  display:flex; align-items:center; gap:14px}
+.topbar__right{margin-left:auto; display:flex; align-items:center; gap:8px}
+
+/* 就地编辑用的下拉：28px 高、无边框、hover 才浮出底色 —— 平时看起来就是一行字，
+   不抢正文的注意力，但点开就能改。 */
+.tb-field{display:inline-flex; align-items:center; gap:5px; cursor:pointer}
+.tb-field__k{font-size:12px; color:var(--hint)}
+.tb-sel{
+  appearance:none; cursor:pointer; height:28px; padding:0 22px 0 8px;
+  border:1px solid transparent; border-radius:7px; background-color:transparent;
+  color:var(--text); font-size:12.5px; font-weight:500;
+  background-image:linear-gradient(45deg,transparent 50%,var(--text-3) 50%),
+                   linear-gradient(135deg,var(--text-3) 50%,transparent 50%);
+  background-position:calc(100% - 13px) 12px, calc(100% - 8px) 12px;
+  background-size:5px 5px, 5px 5px; background-repeat:no-repeat;
+  transition:background-color .14s, border-color .14s;
+}
+.tb-sel:hover{background-color:var(--surface-2); border-color:var(--line)}
+.tb-sel:focus-visible{outline:none; box-shadow:var(--ring)}
+.tb-sel:disabled{color:var(--hint); cursor:default}
+.tb-sep{flex:0 0 auto; width:1px; height:18px; background:var(--line-2)}
+.tb-status{
+  display:inline-flex; align-items:center; gap:7px; height:28px; padding:0 10px;
+  border:1px solid transparent; border-radius:7px; background:transparent;
+  font-size:12.5px; color:var(--text-2); cursor:pointer;
+  transition:background-color .14s, border-color .14s, color .14s;
+}
+.tb-status:hover{background:var(--surface-2); border-color:var(--line); color:var(--text)}
+.tb-status > span:last-child{font-variant-numeric:tabular-nums}
+/* 「未加载 / 加载中」的中性点：绿点只代表"已经驻留" */
+.dot.off{background:var(--text-3);
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--text-3) 18%, transparent)}
+.dot.busy{background:var(--info);
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--info) 20%, transparent)}
 
 /* ============================ 页面标题栏 ============================ */
 .pagehead{display:flex; align-items:flex-end; gap:20px; flex-wrap:wrap; padding:34px 0 20px}
@@ -167,6 +239,9 @@ a{color:var(--accent); text-decoration:none}
 .stack{display:flex; flex-direction:column; gap:16px; min-width:0}
 .rail{position:sticky; top:22px; display:flex; flex-direction:column; gap:16px}
 .railact{display:flex; flex-direction:column; gap:6px}
+/* 右栏生成卡：只剩主按钮和一句提示 —— 参数与驻留状态都在顶部状态带里 */
+.rail-panel{display:flex; flex-direction:column; gap:12px}
+.rail-go{display:flex; flex-direction:column; gap:7px}
 
 /* ============================ 卡片 ============================ */
 .card{background:var(--surface); border-radius:var(--r-lg); box-shadow:var(--sh-1); overflow:hidden}
@@ -180,14 +255,18 @@ a{color:var(--accent); text-decoration:none}
   background:var(--accent-soft); color:var(--accent);
   display:grid; place-items:center; font-size:11.5px; font-weight:700;
 }
-.hint{margin:0; font-size:12.5px; color:var(--text-3); line-height:1.6}
-.hint--warn{color:var(--warn)}
+/* 字段下的辅助说明：--hint 比 --text-3 深一档（约 6:1），12.5px 才读得清；
+   text-wrap:pretty 让中文长句的断行不留下孤字挂在末行 */
+.hint{margin:0; font-size:12.5px; color:var(--hint); line-height:1.65; text-wrap:pretty}
+.hint--warn{color:var(--warn-ink)}
 .row-between{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
 /* 一行两件：输入框吃掉剩余宽度，右边的按钮不缩也不换行 */
 .row-fill{display:flex; align-items:center; gap:8px}
 .row-fill > .input{flex:1 1 auto; min-width:0}
 .row-fill > .btn{flex:0 0 auto}
 .mt{margin-top:14px}
+/* 系统设置页里「预加载 / 释放显存」那一行 */
+.set-actions{display:flex; flex-wrap:wrap; gap:8px; align-items:center}
 .link{appearance:none; background:none; border:0; padding:0; cursor:pointer;
   color:var(--accent); font-size:12.5px; font-weight:500}
 .link:hover{text-decoration:underline; text-underline-offset:2px}
@@ -269,6 +348,8 @@ a{color:var(--accent); text-decoration:none}
   background-position:calc(100% - 17px) 17px,calc(100% - 12px) 17px;
   background-size:5px 5px,5px 5px; background-repeat:no-repeat; padding-right:34px}
 .two{display:grid; grid-template-columns:1fr 1fr; gap:14px}
+/* .field 自带 14px 上边距，放进 .two 会和 gap 叠加把右边那列顶下去 */
+.two > .field + .field{margin-top:0}
 @media (max-width:640px){ .two{grid-template-columns:1fr} }
 
 input[type=range]{
@@ -416,8 +497,8 @@ html[data-theme="dark"] .btn--danger:hover{color:var(--bg)}
 .ed-foot{display:flex; align-items:center; gap:8px; padding:11px 13px; flex-wrap:wrap}
 .ed-read{font-size:12.5px; color:var(--text-2)}
 .ed-note{margin:0; padding:0 13px 13px; font-size:12.5px}
-.ed-note.warn{color:var(--warn)}
-.ed-note.ok{color:var(--ok)}
+.ed-note.warn{color:var(--warn-ink)}
+.ed-note.ok{color:var(--ok-ink)}
 
 .wpl{border:1px solid var(--line); border-radius:var(--r); background:var(--surface); overflow:hidden}
 .wpl-head{display:flex; align-items:center; gap:10px; row-gap:8px; flex-wrap:wrap;
@@ -470,21 +551,30 @@ html[data-theme="dark"] .btn--danger:hover{color:var(--bg)}
 @keyframes slide{0%{margin-left:-34%}100%{margin-left:100%}}
 .run__msg{margin:10px 0 0; font-size:12.5px; color:var(--text-2); white-space:pre-line}
 
-/* ============================ 提示条 ============================ */
+/* ============================ 提示条 ============================
+   颜色只出现在三处：左侧色条、图标、小标题。**正文一律 --text-2**。
+   以前整块染成语义色（蓝底蓝字、米底褐字），长句读着发虚，而且
+   --ok 压在自己的 --ok-soft 上只有 3.2:1，12.5px 正文根本不够。
+   色条用 inset shadow 而不是 border-left：不占盒宽（跟别的行对齐），
+   圆角也被切得干净。四个级别的底色仍是原来的 --*-soft，只是不再吃字色。 */
 .notes{padding:0 20px 18px}
 .notes:empty{padding:0}
 .card__body .notes{padding-top:0}
-.note{display:flex; gap:10px; padding:11px 13px; border-radius:var(--r-sm); font-size:12.5px; line-height:1.6}
+.note{
+  display:flex; gap:9px; padding:10px 12px 10px 13px; border-radius:var(--r-sm);
+  font-size:12.5px; line-height:1.65; color:var(--text-2);
+  background:var(--n-bg); box-shadow:inset 3px 0 0 var(--n-c);
+}
 .note + .note{margin-top:8px}
-.note .ic{flex:0 0 auto; width:17px; height:17px; border-radius:50%; display:grid;
-  place-items:center; font-size:11px; font-weight:700; color:#fff}
+.note .ic{flex:0 0 auto; width:15px; height:15px; margin-top:2px; color:var(--n-ink)}
 .note .bd{min-width:0}
-.note .lb{font-weight:650; margin-right:6px}
-.note p{margin:0; overflow-wrap:break-word}
-.note--ok{background:var(--ok-soft); color:var(--ok)}      .note--ok .ic{background:var(--ok)}
-.note--warn{background:var(--warn-soft); color:var(--warn)} .note--warn .ic{background:var(--warn)}
-.note--error{background:var(--err-soft); color:var(--err)}  .note--error .ic{background:var(--err)}
-.note--info{background:var(--info-soft); color:var(--info)} .note--info .ic{background:var(--info)}
+.note .lb{font-weight:600; margin-right:7px; color:var(--n-ink)}
+.note p{margin:0; overflow-wrap:break-word; text-wrap:pretty}
+.note p + p{margin-top:5px}
+.note--ok   {--n-bg:var(--ok-soft);   --n-c:var(--ok);   --n-ink:var(--ok-ink)}
+.note--warn {--n-bg:var(--warn-soft); --n-c:var(--warn); --n-ink:var(--warn-ink)}
+.note--error{--n-bg:var(--err-soft);  --n-c:var(--err);  --n-ink:var(--err-ink)}
+.note--info {--n-bg:var(--info-soft); --n-c:var(--info); --n-ink:var(--info-ink)}
 
 /* ============================ 说话人卡（官方音色） ============================ */
 .spk{display:grid; grid-template-columns:repeat(auto-fill,minmax(196px,1fr)); gap:10px}
@@ -738,6 +828,8 @@ a.btn{text-decoration:none}
   .navitem span{display:none} .navitem{padding:9px}
   .sidebar__foot{margin-top:0; padding-top:0; flex-direction:row}
   .envchip__t{display:none}
+  .envchip__chev{display:none}
+  .envchip{justify-content:center; padding:8px}
   .content{padding:0 18px 60px}
 }
 @media (prefers-reduced-motion:reduce){ *{animation:none !important; transition:none !important} }
@@ -813,28 +905,71 @@ a.btn{text-decoration:none}
           <path d="M9 7l-4 5 4 5M15 7l4 5-4 5"/></svg>
         <span>API 对接</span>
       </button>
+      <div class="nav__sep"></div>
+      <button class="navitem" data-view="settings" aria-current="false">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span>系统设置</span>
+      </button>
     </nav>
 
     <div class="sidebar__foot">
       <button class="envchip" id="env-btn" title="查看运行环境与排错信息">
-        <span class="dot" id="env-dot"></span>
+        <span class="envchip__dot"><span class="dot" id="env-dot"></span></span>
         <span class="envchip__t">
           <b id="env-main">读取中…</b>
           <span id="env-sub">—</span>
         </span>
+        <svg class="envchip__chev" viewBox="0 0 24 24" width="14" height="14" fill="none"
+             stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"
+             aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
       </button>
     </div>
   </aside>
 
   <div class="main">
-    <main class="content">
+    <!-- 工作台顶栏（应用级 chrome，不是提示条）：左边是当前位置，
+         右边是「语种 / 规格」就地可改 + 模型驻留状态 + 系统设置入口。
+         这两样原来挂在每页右栏的卡里 —— 看的时候占地方，改的时候还得先切页。 -->
+    <header class="topbar">
+      <div class="topbar__in">
+        <div class="topbar__right">
+          <label class="tb-field">
+            <span class="tb-field__k">语种</span>
+            <select class="tb-sel" id="tb-lang" aria-label="语种"></select>
+          </label>
+          <label class="tb-field">
+            <span class="tb-field__k">规格</span>
+            <select class="tb-sel" id="tb-size" aria-label="模型规格"></select>
+          </label>
+          <span class="tb-sep" aria-hidden="true"></span>
+          <button class="tb-status" id="tb-model-btn" type="button" title="模型与显存">
+            <span class="dot" id="tb-dot"></span>
+            <span id="tb-model">—</span>
+          </button>
+          <button class="iconbtn iconbtn--sm" id="tb-settings" type="button"
+                  title="系统设置" aria-label="系统设置">
+            <!-- 齿轮（Feather 的 settings）。别再用「圆 + 8 道放射线」那种画法：
+                 那是**太阳**，跟左边「切换主题」按钮一模一样。 -->
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+                 stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
 
+    <main class="content">
       <!-- ==================== 语音克隆 ==================== -->
       <section class="view" id="view-clone">
         <header class="pagehead">
           <div class="pagehead__t">
             <h1>语音克隆</h1>
-            <p>拿一段几秒的参考音频复刻音色，再用自由文本描述情绪与语气 —— 想怎么说就怎么写，不查词表。</p>
+            <p>拿一段几秒的参考音频复刻音色，再用自由文本描述情绪与语气。</p>
           </div>
           <div class="pagehead__act">
             <button class="btn btn--outline btn--sm" data-goto="library">管理音色库</button>
@@ -846,15 +981,16 @@ a.btn{text-decoration:none}
             <div class="card">
               <div class="card__head">
                 <span class="stepnum">1</span><h2>要合成的文本</h2>
-                <span class="pill sp" id="c-count">0 字</span>
+                <span class="card__act">
+                  <button class="btn btn--outline btn--sm" id="c-sample" type="button"
+                          title="不知道写什么时，先塞一段带情绪的示例进来">填入示例</button>
+                  <span class="pill" id="c-count">0 字</span>
+                </span>
               </div>
               <div class="card__body">
                 <textarea class="textarea" id="c-text" rows="6"
                   placeholder="输入或粘贴要朗读的内容。长文本会按「单段上限」自动切块后拼接…"></textarea>
-                <div class="row-between mt">
-                  <p class="hint">单次上限 <b id="c-max">2000</b> 字；更长的内容请走剧本工坊分段。</p>
-                  <button class="btn btn--ghost btn--sm" id="c-sample">填入示例</button>
-                </div>
+                <p class="hint mt">单次上限 <b id="c-max">2000</b> 字；更长的内容请走剧本工坊分段。</p>
               </div>
             </div>
 
@@ -1146,6 +1282,71 @@ a.btn{text-decoration:none}
         <div id="a-host"></div>
       </section>
 
+      <!-- ==================== 系统设置 ==================== -->
+      <section class="view hidden" id="view-settings">
+        <header class="pagehead">
+          <div class="pagehead__t">
+            <h1>系统设置</h1>
+            <p>生成默认值、模型驻留、运行环境、版本 —— 全局的东西都收在这一页。</p>
+          </div>
+        </header>
+
+        <div class="card">
+          <div class="card__head"><h2>生成默认值</h2></div>
+          <div class="card__body">
+            <p class="hint">设置全局语种和模型规格，切换后下次生成立即生效。</p>
+            <div class="two mt">
+              <div class="field">
+                <label for="set-def-lang">语种</label>
+                <select class="select-native" id="set-def-lang"></select>
+              </div>
+              <div class="field">
+                <label for="set-def-size">模型规格</label>
+                <select class="select-native" id="set-def-size"></select>
+              </div>
+            </div>
+            <p class="hint mt" id="set-def-size-hint"></p>
+          </div>
+        </div>
+
+        <div class="card mt">
+          <div class="card__head">
+            <h2>模型与显存</h2>
+            <span class="pill" id="set-resident">读取中…</span>
+          </div>
+          <div class="card__body">
+            <p class="hint">同一时刻只让一套权重驻留显存 —— 换规格时会自动卸载上一套，
+              两套并存必然 OOM。下面的「预加载」只是把等待提前，不改变生成时用哪套：
+              生成用的是上面「生成默认值」里选的规格，这一页管的是显存里现在有哪套。</p>
+            <table class="kv" id="set-model-kv"></table>
+            <div class="two mt">
+              <select class="select-native" id="set-kind" aria-label="功能"></select>
+              <select class="select-native" id="set-size" aria-label="规格"></select>
+            </div>
+            <div class="set-actions mt">
+              <button class="btn btn--outline btn--sm" id="set-preload">预加载</button>
+              <button class="btn btn--ghost btn--sm" id="set-unload">释放显存</button>
+            </div>
+            <div class="notes mt" id="set-note" style="padding:0"></div>
+          </div>
+        </div>
+
+        <div class="card mt">
+          <div class="card__head"><h2>运行环境</h2></div>
+          <div class="card__body">
+            <table class="kv" id="set-env"></table>
+            <div class="notes mt" id="set-env-notes" style="padding:0"></div>
+          </div>
+        </div>
+
+        <div class="card mt">
+          <div class="card__head"><h2>版本与端点</h2></div>
+          <div class="card__body">
+            <table class="kv" id="set-ver"></table>
+          </div>
+        </div>
+      </section>
+
     </main>
   </div>
 </div>
@@ -1303,20 +1504,32 @@ function showTip(text, from) {
 addEventListener("scroll", (e) => { if (e.target !== _tipEl) hideTip(); },
                  { passive: true, capture: true });
 
+/* 提示条的图标：内联 SVG（24 网格、描边 1.8），不再拿 i / ! / ✓ 这些字符
+   塞进实心圆 —— 字符的光学大小对不齐，中文界面里还容易被当成字母读。
+   颜色由 CSS 的 --n-ink 给，图标自己不写死色值。 */
+const NOTE_ICONS = {
+  ok: '<circle cx="12" cy="12" r="9"/><path d="M8.4 12.4l2.5 2.5 4.7-5.1"/>',
+  warn: '<path d="M12 4.6l8.3 14.3H3.7z"/><path d="M12 9.5v4.2"/><path d="M12 16.7h.01"/>',
+  error: '<circle cx="12" cy="12" r="9"/><path d="M9.4 9.4l5.2 5.2M14.6 9.4l-5.2 5.2"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11.3v4.9"/><path d="M12 8.1h.01"/>',
+};
 const LEVELS = {
-  ok:    ["成功", "✓", "note--ok"],
-  warn:  ["注意", "!", "note--warn"],
-  error: ["失败", "✕", "note--error"],
-  info:  ["提示", "i", "note--info"],
+  ok: ["成功", "ok"],
+  warn: ["注意", "warn"],
+  error: ["失败", "error"],
+  info: ["提示", "info"],
 };
 function noteHTML(text, level = "info") {
   if (!text) return "";
-  const [label, icon, cls] = LEVELS[level] || LEVELS.info;
-  const body = String(text).split("\n").filter((l) => l.trim())
+  const [label, key] = LEVELS[level] || LEVELS.info;
+  const body = String(text).split("\n").map((l) => l.trim()).filter(Boolean)
     .map((l) => `<p>${esc(l)}</p>`).join("");
-  const role = level === "error" ? "alert" : "status";
-  return `<div class="note ${cls}" role="${role}">`
-       + `<span class="ic" aria-hidden="true">${icon}</span>`
+  // 「失败/注意」会让读屏立刻打断当前播报；「提示/成功」只排进队列，不打断
+  const role = key === "error" || key === "warn" ? "alert" : "status";
+  return `<div class="note note--${key}" role="${role}">`
+       + `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"`
+       + ` stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"`
+       + ` aria-hidden="true">${NOTE_ICONS[key]}</svg>`
        + `<div class="bd"><span class="lb">${label}</span>${body}</div></div>`;
 }
 
@@ -1964,6 +2177,10 @@ async function runJob(payload, R) {
       await new Promise((r) => setTimeout(r, 400));
     }
     HISTORY_DIRTY = true;
+    // 一次生成必然动模型驻留状态（首次会加载、换规格会先卸旧的），
+    // 顶部状态带得跟着刷新，否则会一直显示开跑之前的结论。
+    // 注意：不能用 await —— 状态刷新失败不该影响这次生成的结果展示。
+    refreshModelStatus();
     if (st.state === "error") {
       if (R) paintResult(R, { level: "error", message: st.message, params: payload });
       else toast(st.message, "err");
@@ -1987,54 +2204,135 @@ async function runJob(payload, R) {
 /* ============================================================================
    8. 四个生成页共用的「右侧栏 + 高级区」
    ============================================================================ */
-function renderRail(prefix, { sizes = null, goLabel = "生成语音", tip = "" } = {}) {
-  const langOpts = (BOOT.languages || ["Auto"]).map((l) =>
-    `<option value="${esc(l)}">${esc(l === "Auto" ? "Auto（自动识别）" : l)}</option>`).join("");
-  const sizeList = sizes || BOOT.sizes || ["1.7B", "0.6B"];
-  const sizeOpts = [`<option value="auto">自动（按显存挑，当前建议 ${esc(BOOT.hardware?.default_size || "1.7B")}）</option>`]
-    .concat(sizeList.map((s) => `<option value="${esc(s)}">${esc(s)}</option>`)).join("");
+/* ---------------------------------------------------------------------------
+   生成默认值（语种 / 模型规格）
+   这两个参数 90% 的时候没人动 —— 摆在每个生成页的右栏里纯属占地方，还抢主按钮的
+   视觉重量。所以统一收到「系统设置 → 生成默认值」，存在浏览器本地；生成页右栏
+   只留一行小字显示当前生效值 + 一个跳转。
+   读的一律走下面这两个函数，把本地存的值跟服务端给的可选范围对齐 ——
+   手改过 localStorage、或换了一台机器，也不会把非法值送进接口。
+--------------------------------------------------------------------------- */
+const GEN_DEFAULTS_KEY = "qs.gen.defaults";
+const GEN_DEFAULTS = (() => {
+  let raw = {};
+  try { raw = JSON.parse(localStorage.getItem(GEN_DEFAULTS_KEY) || "{}") || {}; } catch (e) { raw = {}; }
+  return { lang: raw.lang || "Auto", size: raw.size || "auto" };
+})();
 
-  // 结果卡在最上、参数卡在最下：生成完那一屏就是结果，不用往下翻；
-  // 语种/规格属于「开跑前的设置」，看过一次就不用再盯，沉到底下不抢视线。
+function saveGenDefaults(patch) {
+  Object.assign(GEN_DEFAULTS, patch);
+  try { localStorage.setItem(GEN_DEFAULTS_KEY, JSON.stringify(GEN_DEFAULTS)); } catch (e) { /* 隐私模式下存不了，本页内仍然生效 */ }
+  paintRailDefaults();
+}
+
+function genLang() {
+  const list = BOOT.languages || ["Auto"];
+  return list.includes(GEN_DEFAULTS.lang) ? GEN_DEFAULTS.lang : "Auto";
+}
+
+// 本页实际会用到的规格：auto 落到本机推荐值，再夹到该页可选范围里
+// （声音设计只有 1.7B，所以那边永远是 1.7B）
+function effSize(list) {
+  const avail = list || BOOT.sizes || ["1.7B", "0.6B"];
+  const want = GEN_DEFAULTS.size === "auto"
+    ? (BOOT.hardware?.default_size || avail[0])
+    : GEN_DEFAULTS.size;
+  return avail.includes(want) ? want : avail[0];
+}
+
+const RAIL_SIZES = {};
+
+/* 工作台顶栏：当前位置 + 语种/规格（就地可改）+ 模型驻留状态。
+   规格按「当前所在页面」算 —— 声音设计页只有 1.7B，那页的下拉就只给这一项。 */
+const VIEW_PREFIX = { clone: "c", design: "d", official: "o", script: "s" };
+const curView = () => (location.hash || "").replace("#", "") || "clone";
+
+function tbSpecList() {
+  const prefix = VIEW_PREFIX[curView()];
+  return prefix ? RAIL_SIZES[prefix] : (BOOT.sizes || ["1.7B", "0.6B"]);
+}
+
+function paintTopbarSpecs() {
+  const list = tbSpecList();
+  const langOpts = (BOOT.languages || ["Auto"]).map((l) =>
+    `<option value="${esc(l)}">${esc(l === "Auto" ? "自动识别" : l)}</option>`).join("");
+  if ($("#tb-lang").innerHTML !== langOpts) $("#tb-lang").innerHTML = langOpts;
+  $("#tb-lang").value = genLang();
+
+  // 规格：永远带一项「自动」，否则在顶栏选了具体规格就再也回不去了；
+  // 自动那一项直接标出它在本机会落到哪一档，省得用户猜。
+  // 具体规格只列这页真能用的（声音设计只有 1.7B）。
+  const sig = list.join(",");
+  if ($("#tb-size").dataset.sig !== sig) {
+    const autoLabel = `自动（${BOOT.hardware?.default_size || "按显存挑"}）`;
+    $("#tb-size").innerHTML = [`<option value="auto">${esc(autoLabel)}</option>`]
+      .concat(list.map((s) => `<option value="${esc(s)}">${esc(s)}</option>`)).join("");
+    $("#tb-size").dataset.sig = sig;
+  }
+  // 跟系统设置显示同一份值：默认是 auto 就显示 auto，
+  // 默认的规格这页没有（比如在声音设计页存了 0.6B）就显示本页实际会用的那一档
+  const want = GEN_DEFAULTS.size;
+  $("#tb-size").value = (want === "auto" || list.includes(want)) ? want : effSize(list);
+  $("#tb-size").title = "改的是全局默认值（系统设置里也能改）";
+}
+
+function paintTopbar() {
+  const s = BOOT.model_status || {};
+  const ld = s.loaded, loading = s.loading;
+  const vram = Number(s.vram_allocated_gib || 0);
+  const dot = $("#tb-dot");
+  let text;
+  if (loading) {
+    dot.className = "dot busy";
+    text = `加载中 ${loading.size}…`;
+  } else if (ld) {
+    dot.className = "dot";
+    text = `${KIND_LABEL[ld.kind] || ld.kind} · ${ld.size}`
+      + (vram ? ` · ${vram.toFixed(2)} GiB` : "");
+  } else {
+    dot.className = "dot off";
+    text = "未加载";
+  }
+  $("#tb-model").textContent = text;
+  $("#tb-model-btn").title = loading
+    ? "正在加载权重…"
+    : (ld
+      ? `${KIND_LABEL[ld.kind] || ld.kind} · ${ld.size}`
+        + `（${vram ? vram.toFixed(2) + " GiB" : "—"}）—— 点击查看模型与显存`
+      : "未加载 —— 首次生成时自动加载，点击查看模型与显存");
+  paintTopbarSpecs();
+}
+
+function paintRailDefaults() {
+  // 默认值变了：顶栏和系统设置页那两个下拉都得跟着变；
+  // 官方音色页那条「0.6B 不支持情感指令」的提醒也是跟着规格走的，不重算会停在旧结论上。
+  paintTopbar();
+  syncSettingsDefaults();
+  if ($("#o-note-06")) renderOfficialNote();
+}
+
+function renderRail(prefix, { sizes = null, goLabel = "生成语音", tip = "" } = {}) {
+  RAIL_SIZES[prefix] = sizes || BOOT.sizes || ["1.7B", "0.6B"];
+
+  // 顺序：结果卡 → 生成卡。语种/规格/驻留状态都在顶部状态带里，
+  // 这里只留动作，右栏从此不用再为「参数」留位置。
   $(`#${prefix}-rail`).innerHTML = `
     <div id="${prefix}-result"></div>
 
-    <div class="railact">
-      <button class="btn btn--primary btn--lg btn--block" id="${prefix}-go">${esc(goLabel)}</button>
-      ${tip ? `<p class="hint hint--center">${esc(tip)}</p>` : ""}
-    </div>
-
     <div class="card">
-      <div class="card__head"><h2>生成参数</h2></div>
-      <div class="card__body">
-        <div class="field">
-          <label for="${prefix}-lang">语种</label>
-          <select class="select-native" id="${prefix}-lang">${langOpts}</select>
-        </div>
-        <div class="field">
-          <label for="${prefix}-size">模型规格</label>
-          <select class="select-native" id="${prefix}-size">${sizeOpts}</select>
-          <p class="hint" id="${prefix}-size-hint"></p>
+      <div class="card__body rail-panel">
+        <div class="rail-go">
+          <button class="btn btn--primary btn--lg btn--block" id="${prefix}-go">${esc(goLabel)}</button>
+          ${tip ? `<p class="hint hint--center">${esc(tip)}</p>` : ""}
         </div>
       </div>
     </div>`;
 
-  const sizeHint = $(`#${prefix}-size-hint`);
-  const syncHint = () => {
-    const v = $(`#${prefix}-size`).value;
-    const eff = v === "auto" ? (BOOT.hardware?.default_size || "1.7B") : v;
-    sizeHint.textContent = eff === "0.6B"
-      ? "0.6B 省显存、更快；官方精品不支持情感指令（内核限制）。"
-      : "1.7B 音质与控制力更好，是本工具默认。";
-  };
-  $(`#${prefix}-size`).addEventListener("change", syncHint);
-  syncHint();
-
   const R = createResult($(`#${prefix}-result`));
   return {
     R,
-    lang: () => $(`#${prefix}-lang`).value,
-    size: () => $(`#${prefix}-size`).value || "auto",
+    lang: () => genLang(),
+    size: () => effSize(RAIL_SIZES[prefix]),
     go: (fn) => {
       const btn = $(`#${prefix}-go`);
       btn.addEventListener("click", fn);
@@ -2044,6 +2342,9 @@ function renderRail(prefix, { sizes = null, goLabel = "生成语音", tip = "" }
 }
 
 function renderAdv(prefix, notes = []) {
+  // 「模型管理」不在这里了：它是**全局**的（同一时刻只驻留一套权重），
+  // 四个生成页各挂一份既重复，状态又只在点按钮时才更新 —— 现在统一收到
+  // 「系统设置」页（#view-settings），进来就拉一次 /api/model。
   $(`#${prefix}-adv`).innerHTML = `
     <details class="acc" open>
       <summary>分段与上限<span class="acc__note">长文本怎么被切开</span></summary>
@@ -2055,49 +2356,9 @@ function renderAdv(prefix, notes = []) {
         </table>
         ${notes.map((n) => noteHTML(n, "info")).join("")}
       </div>
-    </details>
-    <details class="acc">
-      <summary>模型管理<span class="acc__note" id="${prefix}-mg-status">—</span></summary>
-      <div class="acc__body">
-        <p class="hint">本工具同一时刻只让一套权重驻留显存 —— 换规格时会自动卸载上一套，避免两套同时占用把显存挤爆。</p>
-        <div class="row-between mt">
-          <button class="btn btn--outline btn--sm" data-role="reload">重新加载当前规格</button>
-          <button class="btn btn--ghost btn--sm" data-role="unload">卸载模型</button>
-        </div>
-        <div class="notes mt" data-role="mg-note" style="padding:0"></div>
-      </div>
     </details>`;
-
-  const adv = $(`#${prefix}-adv`);
-  const note = $('[data-role=mg-note]', adv);
-  const status = $(`#${prefix}-mg-status`);
-  const showStatus = () => {
-    const s = BOOT.model_status || {};
-    status.textContent = s.loaded ? `${s.loaded.kind} / ${s.loaded.size}` : "当前未加载";
-  };
-  showStatus();
-  $('[data-role=unload]', adv).addEventListener("click", async () => {
-    try {
-      const r = await post("/api/model/unload");
-      BOOT.model_status = r.status || {};
-      showStatus();
-      note.innerHTML = noteHTML("已卸载，显存已释放。下次生成会重新加载。", "ok");
-    } catch (e) { note.innerHTML = noteHTML(e.message, "error"); }
-  });
-  $('[data-role=reload]', adv).addEventListener("click", async () => {
-    const kind = PREFIX_KIND[prefix];
-    try {
-      note.innerHTML = noteHTML("正在加载…首次可能要十几秒。", "info");
-      const r = await post("/api/model/load", { kind, size: railOf(prefix).size() });
-      BOOT.model_status = r.status || {};
-      showStatus();
-      const ld = r.status?.loaded;
-      note.innerHTML = noteHTML(ld ? `加载完成：${ld.kind} / ${ld.size}` : "已加载。", "ok");
-    } catch (e) { note.innerHTML = noteHTML(e.message, "error"); }
-  });
 }
 
-const PREFIX_KIND = { c: "clone", d: "design", o: "official", s: "clone" };
 const RAILS = {};
 const railOf = (p) => RAILS[p];
 
@@ -2727,7 +2988,13 @@ function initClone() {
   renderCloneVoice();
 
   const ta = bindDraft("#c-text");
-  const sync = () => { $("#c-count").textContent = ta.value.trim().length + " 字"; };
+  const sync = () => {
+    const n = ta.value.trim().length;
+    $("#c-count").textContent = n + " 字";
+    // 「填入示例」只在空框时露面：它就是给「不知道该写什么」的人用的，
+    // 而且程序赋值会直接顶掉已有文本、还不进撤销栈 —— 别给它误伤的机会。
+    $("#c-sample").hidden = n > 0;
+  };
   ta.addEventListener("input", sync);
   sync();                                    // 草稿回填后先把字数对上
   $("#c-sample").addEventListener("click", () => {
@@ -2785,10 +3052,10 @@ function initDesign() {
   ta.addEventListener("input", sync);
   sync();
 
-  // 声音设计只有 1.7B 一套权重，规格选择器就只放这一项，免得给了假选项
+  // 声音设计只有 1.7B 一套权重：renderRail 传 sizes:["1.7B"] 就把它夹死了，
+  // 页面右栏也不再放规格选择器（默认值统一在系统设置里）。
   RAILS.d = renderRail("d", { sizes: ["1.7B"], goLabel: "设计并生成" });
   renderAdv("d", ["声音设计不需要参考音频，同一段描述每次结果会有细微差别，多跑几次挑满意的。"]);
-  $("#d-size").disabled = true;
 
   RAILS.d.go(async () => {
     const text = ta.value.trim(), desc = inst.value.trim();
@@ -2877,7 +3144,7 @@ function renderOfficialNote() {
   const eff = RAILS.o.size() === "auto" ? (BOOT.hardware?.default_size || "1.7B") : RAILS.o.size();
   $("#o-note-06").innerHTML = eff === "0.6B"
     ? noteHTML("当前选的是 0.6B：内核会把情感指令强制置空，多人对话也会被拒绝。"
-      + "要演情绪或对话，请把右侧「模型规格」切到 1.7B。", "warn")
+      + "要演情绪或对话，请到「系统设置 → 生成默认值」把模型规格切到 1.7B。", "warn")
     : "";
 }
 
@@ -2954,7 +3221,8 @@ function initOfficial() {
   renderAdv("o", [
     "多人对话会把每一句单独生成再拼接，句间会插入一小段静音；逐句之间的音色衔接由模型自身保证。",
   ]);
-  $("#o-size").addEventListener("change", renderOfficialNote);
+  // 规格选择器已经不在右栏了；这条提醒改由默认值驱动
+  // （系统设置里改完会走 paintRailDefaults → renderOfficialNote）
   renderOfficialNote();
 
   RAILS.o.go(async () => {
@@ -2966,7 +3234,7 @@ function initOfficial() {
     };
     const eff = RAILS.o.size() === "auto" ? (BOOT.hardware?.default_size || "1.7B") : RAILS.o.size();
     if (eff === "0.6B" && /^\s*\[/m.test(text)) {
-      toast("0.6B 不支持多人对话，请切到 1.7B", "warn");
+      toast("0.6B 不支持多人对话，请到系统设置把模型规格切到 1.7B", "warn");
       return;
     }
     const btn = $("#o-go");
@@ -3848,11 +4116,18 @@ function mBadge(method) {
   return `<span class="m m--${m === "GET" ? "get" : "post"}">${esc(m)}</span>`;
 }
 
+/* doc 里偶尔用 **强调**；esc 之后按最保守的规则还原成 <strong>：
+   只认成对的 **…**（不含 * ），文本已经过 esc，所以不会带进标签。
+   之前这些星号是原样显示在页面上的（「文档写了 **与 /api/upload 完全一致**」那种）。 */
+function docText(v) {
+  return esc(String(v ?? "")).replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+}
+
 function paramsTable(params) {
   if (!params || !params.length) return "";
   return `<table class="ptbl"><thead><tr><th>参数</th><th>类型</th><th>说明</th></tr></thead><tbody>`
     + params.map(([n, t, d2]) =>
-      `<tr><td class="pn">${esc(n)}</td><td class="pt">${esc(t)}</td><td>${esc(d2)}</td></tr>`).join("")
+      `<tr><td class="pn">${esc(n)}</td><td class="pt">${esc(t)}</td><td>${docText(d2)}</td></tr>`).join("")
     + `</tbody></table>`;
 }
 
@@ -3865,9 +4140,9 @@ function endpointHTML(ep) {
   return `<details class="ep">
     <summary><span class="ep__row">${mBadge(ep.method)}
       <span class="ep__path">${esc(ep.path)}</span>
-      <span class="ep__title">${esc((ep.desc || "").slice(0, 34))}</span></span></summary>
+      <span class="ep__title">${esc((ep.desc || "").replace(/\*\*/g, "").slice(0, 34))}</span></span></summary>
     <div class="ep__body">
-      <p class="apidesc">${esc(ep.desc || "")}</p>
+      <p class="apidesc">${docText(ep.desc || "")}</p>
       ${paramsTable(ep.params)}
     </div>
   </details>`;
@@ -3914,6 +4189,10 @@ function renderApiPage(spec) {
         <tr><td class="pn">3</td><td>GET <span class="mono">/api/jobs/&lt;id&gt;</span></td><td>done 后 result.url 就是音频地址</td></tr>
       </tbody></table>
     </div></div>
+    <h2 style="margin:26px 0 12px;font-size:15px">直调须知</h2>
+    <div class="card"><div class="card__body">
+      ${(spec.notes || []).map((n) => noteHTML(n, "info")).join("")}
+    </div></div>
     <h2 style="margin:26px 0 12px;font-size:15px">示例</h2>
     <div class="stack">${examples}</div>
     <h2 style="margin:26px 0 12px;font-size:15px">接口清单</h2>
@@ -3941,7 +4220,7 @@ async function loadApiDocs(force) {
 /* ============================================================================
    17. 导航与环境抽屉
    ============================================================================ */
-const VIEWS = ["clone", "design", "official", "script", "library", "history", "api"];
+const VIEWS = ["clone", "design", "official", "script", "library", "history", "api", "settings"];
 const LOADED = new Set();
 
 function gotoView(name) {
@@ -3961,6 +4240,12 @@ function gotoView(name) {
   }
   if (name === "history" && HISTORY_DIRTY) refreshHistory();
   if (name === "library") renderLibrary();
+  // 系统设置每次进来都重画：模型驻留状态会被别处的生成改掉，缓存那份必然过期
+  if (name === "settings") renderSettings();
+  // 状态带里有一格是「本页会用哪个规格」（声音设计只有 1.7B），切页要重算；
+  // 系统设置页自己就摆着这些内容，那边藏起来免得重复。
+  // 顶栏的「当前位置」和规格选项都跟着页面走（声音设计页的规格只有 1.7B）
+  paintTopbar();
   // 高亮层的宽高是量出来的，而视图藏起来时量到的是 0。
   // 切回来必须重新量一次，否则那一层会停在 0 宽（颜色整个看不见）。
   if (name === "script") syncScriptHighlight();
@@ -3985,14 +4270,233 @@ function openEnv(on) {
   $("#drawer").setAttribute("aria-hidden", on ? "false" : "true");
 }
 
+/* ============================================================================
+   18. 系统设置
+   「模型管理」以前在四个生成页的「高级」里各挂一份 —— 它管的是**全局**状态
+   （同一时刻只驻留一套权重），重复四遍没道理，而且状态只在点按钮时才更新：
+   生成完模型明明在显存里，那行字还写着「当前未加载」。现在收到这一页，
+   每次进来先拉一次 /api/model，以服务端为准。
+   ============================================================================ */
+const KIND_LABEL = { clone: "语音克隆", design: "声音设计", official: "官方精品" };
+const hasModel = (k, s) => Boolean(BOOT.models?.map?.[`${k}|${s}`]);
+let SETTINGS_READY = false;
+// 用户自己动过那两个下拉之后，就不再自动改它的值（否则每次重画都把他选的顶掉）
+let SET_PICKED = false;
+
+/* 系统设置里「生成默认值」那格下面的说明。提成模块级是因为顶栏也能改默认值，
+   改完得让这行字跟着换（不然还写着旧规格的取舍说明）。 */
+function paintDefHint() {
+  const el = $("#set-def-size-hint");
+  if (!el) return;
+  const v = $("#set-def-size")?.value || "auto";
+  const eff = v === "auto" ? (BOOT.hardware?.default_size || "1.7B") : v;
+  el.textContent = eff === "0.6B"
+    ? "0.6B 省显存、更快；但官方精品的 0.6B 不支持情感指令（内核限制）。"
+    : "1.7B 音质与控制力更好；显存不足 6 GiB 的机器上会溢出到系统内存，明显变慢。";
+}
+
+/* 顶栏改完默认值后，把系统设置里那两个下拉同步过来 —— 否则回去看还是旧值，
+   两个入口就会各说各话。 */
+function syncSettingsDefaults() {
+  if (!SETTINGS_READY) return;
+  $("#set-def-lang").value = genLang();
+  $("#set-def-size").value =
+    GEN_DEFAULTS.size === "auto" || (BOOT.sizes || []).includes(GEN_DEFAULTS.size)
+      ? GEN_DEFAULTS.size : "auto";
+  paintDefHint();
+}
+
+function paintSettings() {
+  const s = BOOT.model_status || {};
+  const ld = s.loaded, loading = s.loading;
+  const pill = $("#set-resident");
+  if (loading) {
+    pill.className = "pill pill--info";
+    pill.textContent = `加载中 ${loading.size}`;
+  } else if (ld) {
+    pill.className = "pill pill--ok";
+    pill.textContent = `已驻留 ${ld.size}`;
+  } else {
+    pill.className = "pill";
+    pill.textContent = "当前未加载";
+  }
+
+  const vram = Number(s.vram_allocated_gib || 0);
+  const missing = BOOT.models?.missing || [];
+  const rows = [
+    ["当前驻留", loading
+      ? `正在加载 ${KIND_LABEL[loading.kind] || loading.kind} / ${loading.size} …`
+      : (ld ? `${KIND_LABEL[ld.kind] || ld.kind} · ${ld.size}`
+            : "未加载（首次生成时自动加载）")],
+    ["显存占用", vram ? `${vram.toFixed(2)} GiB` : "—"],
+    ["权重", missing.length ? `缺 ${missing.join("、")}` : "5 套齐全"],
+  ];
+  $("#set-model-kv").innerHTML = rows.map(([k, v]) =>
+    `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join("");
+
+  if (!SET_PICKED) applySuggestedPick();
+}
+
+// 规格下拉里给「当前驻留的那一套」打个标：两个 0.6B 摆在一起时，
+// 光看数字分不出哪个是现状。
+function syncSizeSelect() {
+  const k = $("#set-kind").value;
+  const cur = $("#set-size").value;
+  const ld = (BOOT.model_status || {}).loaded;
+  const sizes = (BOOT.sizes || ["1.7B", "0.6B"]).filter((s) => hasModel(k, s));
+  $("#set-size").innerHTML = sizes.map((s) =>
+    `<option value="${s}">${s}${ld && ld.kind === k && ld.size === s ? "（已驻留）" : ""}</option>`
+  ).join("");
+  if (sizes.includes(cur)) $("#set-size").value = cur;
+  $("#set-preload").disabled = sizes.length === 0;
+}
+
+// 下拉的默认值跟着「显存里现在有哪套」走；一套都没加载时跟着本机推荐规格走。
+// 以前直接取列表第一项 —— 于是 4 GiB 卡上明明驻留着 0.6B，这里却写着 1.7B，
+// 一点「预加载」就会把驻留模型换成它、还大概率 OOM。
+function applySuggestedPick() {
+  const ld = (BOOT.model_status || {}).loaded;
+  const kind = ld && KIND_LABEL[ld.kind] ? ld.kind : "clone";
+  if ([...$("#set-kind").options].some((o) => o.value === kind)) {
+    $("#set-kind").value = kind;
+  }
+  syncSizeSelect();
+  const want = (ld && ld.size) || BOOT.hardware?.default_size || "";
+  if (want && [...$("#set-size").options].some((o) => o.value === want)) {
+    $("#set-size").value = want;
+  }
+}
+
+/* 模型的加载 / 卸载 / 外部刷新都从这里走：更新 BOOT.model_status 之后
+   把顶栏和这一页一起重画。之前预加载完只 paintSettings()，顶栏还停在「未加载」——
+   两个地方各说各话，是最不该出现的那种不一致。 */
+function applyModelStatus(status) {
+  BOOT.model_status = status || {};
+  paintTopbar();
+  paintSettings();
+}
+
+function bindSettings() {
+  if (SETTINGS_READY) return;
+  SETTINGS_READY = true;
+  $("#set-kind").innerHTML = ["clone", "official", "design"].map((k) =>
+    `<option value="${k}">${KIND_LABEL[k]}</option>`).join("");
+  syncSizeSelect();
+  $("#set-kind").addEventListener("change", () => { SET_PICKED = true; syncSizeSelect(); });
+  $("#set-size").addEventListener("change", () => { SET_PICKED = true; });
+
+  // ---- 生成默认值（语种 / 模型规格，存在浏览器本地）----
+  const langs = BOOT.languages || ["Auto"];
+  $("#set-def-lang").innerHTML = langs.map((l) =>
+    `<option value="${esc(l)}">${esc(l === "Auto" ? "Auto（自动识别）" : l)}</option>`).join("");
+  $("#set-def-size").innerHTML = [
+    `<option value="auto">自动（按显存挑，当前建议 ${esc(BOOT.hardware?.default_size || "1.7B")}）</option>`,
+    ...(BOOT.sizes || []).map((s) => `<option value="${esc(s)}">${esc(s)}</option>`),
+  ].join("");
+  $("#set-def-lang").value = genLang();
+  $("#set-def-size").value = GEN_DEFAULTS.size === "auto"
+    || (BOOT.sizes || []).includes(GEN_DEFAULTS.size) ? GEN_DEFAULTS.size : "auto";
+  paintDefHint();
+
+  $("#set-def-lang").addEventListener("change", () => {
+    saveGenDefaults({ lang: $("#set-def-lang").value });
+  });
+  $("#set-def-size").addEventListener("change", () => {
+    saveGenDefaults({ size: $("#set-def-size").value });
+    paintDefHint();
+  });
+
+  $("#set-preload").addEventListener("click", async () => {
+    const kind = $("#set-kind").value, size = $("#set-size").value;
+    const note = $("#set-note");
+    note.innerHTML = noteHTML(`正在加载 ${KIND_LABEL[kind]} / ${size} …首次可能要十几秒。`, "info");
+    try {
+      const r = await post("/api/model/load", { kind, size });
+      applyModelStatus(r.status);
+      note.innerHTML = noteHTML(
+        `已加载 ${KIND_LABEL[kind]} / ${size} —— 生成时会直接用这套，不用再等。`, "ok");
+    } catch (e) { note.innerHTML = noteHTML(e.message, "error"); }
+  });
+
+  $("#set-unload").addEventListener("click", async () => {
+    const note = $("#set-note");
+    try {
+      const r = await post("/api/model/unload");
+      applyModelStatus(r.status);
+      note.innerHTML = noteHTML("已释放显存。下次生成会重新加载。", "ok");
+    } catch (e) { note.innerHTML = noteHTML(e.message, "error"); }
+  });
+}
+
+/* 拉一次 /api/model，把 BOOT.model_status（和缺失权重）更新到最新。
+   顶部状态带、系统设置页都靠它 —— BOOT 里那份是页面打开时的快照，
+   生成过之后必然过期。永远不 reject：拉不到就沿用上次那份，别挡住页面。 */
+async function refreshModelStatus() {
+  try {
+    const r = await api("/api/model");
+    if (r.status) BOOT.model_status = r.status;
+    if (Array.isArray(r.missing) && BOOT.models) {
+      BOOT.models.missing = r.missing;
+      BOOT.models.ready = r.missing.length === 0;
+    }
+  } catch (e) { /* 静默：状态拿不到不该拦着页面 */ }
+  paintTopbar();
+  // 系统设置页正在看着的时候（比如在别处生了成再切回来），卡片也要跟着对
+  if (SETTINGS_READY && !$("#view-settings").classList.contains("hidden")) paintSettings();
+}
+
+async function renderSettings() {
+  bindSettings();
+  // 首屏那份 model_status 是页面打开时拍的，多半已经过期 —— 进来先拉最新的
+  await refreshModelStatus();
+  paintSettings();
+
+  const h = BOOT.hardware || {};
+  $("#set-env").innerHTML = (h.rows || []).map((r) =>
+    `<tr><th>${esc(r.k)}</th><td>${esc(r.v)}</td></tr>`).join("");
+  $("#set-env-notes").innerHTML = (h.notes || []).map((n) => noteHTML(n, "info")).join("")
+    || noteHTML("没有需要特别说明的适配项。", "ok");
+
+  const ver = [
+    ["代码版本", BOOT.version || "未标记"],
+    ...(BOOT.pack_stamp ? [["打包标记", BOOT.pack_stamp]] : []),
+    ["自动转写", BOOT.asr?.available ? "可用" : `不可用（${BOOT.asr?.reason || "原因未知"}）`],
+    ["服务端点", location.origin],
+  ];
+  $("#set-ver").innerHTML = ver.map(([k, v]) =>
+    `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join("");
+}
+
+// 「NVIDIA GeForce GTX 1650」→「GTX 1650」：侧栏只有 224px，
+// 带厂商前缀的话显存就永远被省略号吃掉。只剥前缀，型号本身不动。
+function shortDevice(name) {
+  return String(name || "")
+    .replace(/^NVIDIA\s+(GeForce\s+)?/i, "")
+    .replace(/^AMD\s+(Radeon\s+)?/i, "")
+    .replace(/^Intel\s+(Arc\s+)?/i, "")
+    .trim();
+}
+
+const DTYPE_SHORT = { bfloat16: "bf16", float16: "fp16", float32: "fp32" };
+
 function renderEnv() {
   const h = BOOT.hardware || {};
   const p = h.rows || [];
+  // 老版本 /api/bootstrap 没带 device_name 时，从 rows 里捞「设备名称」兜底
+  const dev = shortDevice(h.device_name
+    || (p.find?.((r) => r.k === "设备名称") || {}).v);
+  const vram = h.vram_gib ? `${h.vram_gib.toFixed(1)} GiB` : "";
+  const dt = DTYPE_SHORT[h.dtype] || h.dtype || "";
+  // 只拼拿得到的，绝不留悬空分隔符
+  const bits = h.is_gpu ? [dev, dt, vram] : [];
   $("#env-main").textContent = h.is_gpu ? "GPU 加速" : "CPU 推理";
   $("#env-sub").textContent = h.is_gpu
-    ? `${(h.device_name || "").slice(0, 22)} · ${h.vram_gib ? h.vram_gib.toFixed(1) + " GiB" : "—"}`
+    ? (bits.filter(Boolean).join(" · ") || "—")
     : "CPU · 会比较慢";
   $("#env-dot").className = "dot" + (h.is_gpu ? "" : " cpu");
+  $("#env-btn").title = h.is_gpu
+    ? `${dev || "GPU"} · ${dt || "?"} · ${vram || "?"} —— 点开看运行环境与排错信息`
+    : "CPU 推理 —— 点开看运行环境与排错信息";
   $("#env-table").innerHTML = p.map((r) =>
     `<tr><th>${esc(r.k)}</th><td>${esc(r.v)}</td></tr>`).join("");
 
@@ -4017,6 +4521,21 @@ function renderEnv() {
 /* ============================================================================
    18. 启动
    ============================================================================ */
+/* 启动期的兜底：以前只有取 /api/bootstrap 那一步有 try/catch，
+   后面 initXxx() 里任何一个异常都会让遮罩「正在读取运行环境与音色库…」一直转下去，
+   控制台里才有线索 —— 用户看到的就是「卡住了」，很难自查。
+   现在把错误直接写进遮罩，别让人干等。 */
+function bootFail(err) {
+  const b = $("#boot");
+  if (!b || b.classList.contains("hidden")) return;
+  const msg = (err && (err.stack || err.message)) || String(err);
+  b.innerHTML = `<b>启动失败</b><br>${esc(String(msg).split("\n")[0])}<br>
+    <span style="font-size:12px">按 F12 打开控制台可看完整堆栈；改完代码刷新即可。</span>`;
+}
+
+addEventListener("error", (e) => bootFail(e.error || e.message));
+addEventListener("unhandledrejection", (e) => bootFail(e.reason));
+
 async function boot() {
   try {
     BOOT = await api("/api/bootstrap");
@@ -4039,13 +4558,25 @@ async function boot() {
   $("#scrim").addEventListener("click", () => openEnv(false));
   $("#a-reload").addEventListener("click", () => loadApiDocs(true));
 
-  initClone();
-  initDesign();
-  initOfficial();
-  initScript();
-  initLibrary();
-  renderEnv();
-  $("#c-max").textContent = String(BOOT.limits?.max_text_chars ?? 2000);
+  try {
+    initClone();
+    initDesign();
+    initOfficial();
+    initScript();
+    initLibrary();
+    renderEnv();
+    $("#c-max").textContent = String(BOOT.limits?.max_text_chars ?? 2000);
+    // 顶栏：语种/规格是"就地改全局默认值"，改完立刻写本地并存回系统设置页
+    $("#tb-lang").addEventListener("change", () => saveGenDefaults({ lang: $("#tb-lang").value }));
+    $("#tb-size").addEventListener("change", () => saveGenDefaults({ size: $("#tb-size").value }));
+    $("#tb-model-btn").addEventListener("click", () => gotoView("settings"));
+    $("#tb-settings").addEventListener("click", () => gotoView("settings"));
+    paintTopbar();
+  } catch (e) {
+    console.error(e);
+    bootFail(e);
+    return;
+  }
 
   $("#boot").classList.add("hidden");
   $("#app").classList.remove("hidden");

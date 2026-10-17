@@ -116,6 +116,10 @@ def api_bootstrap():
             "rows": [{"k": k, "v": v} for k, v in p.rows()],
             "notes": p.notes,
             "device": p.device,
+            # 侧栏芯片要显示「显卡名 · 精度 · 显存」，缺了 device_name 就只能
+            # 拼出一个孤零零的「· 4.0 GiB」。这里补上（前端还有 rows 兜底）。
+            "device_name": p.device_name,
+            "compute_cap": p.compute_cap,
             "dtype": p.dtype,
             "vram_gib": p.vram_gib,
             "default_size": p.default_size,
@@ -340,8 +344,19 @@ async def api_voice_delete(payload: dict):
 
 
 # ---------------------------------------------------------------------------
-# 模型管理（界面「高级 → 模型管理」用）
+# 模型管理（界面「系统设置 → 模型与显存」用）
 # ---------------------------------------------------------------------------
+@app.get("/api/model")
+def api_model():
+    """当前驻留的模型 / 显存占用 / 缺失的权重。
+
+    以前只有下面两个 POST，状态完全靠它们自己回传 —— 生成完之后前端那份
+    BOOT.model_status 就过期了（权重明明在显存里，界面还写「当前未加载」）。
+    系统设置页每次进来都拉一次这个接口，以服务端为准。
+    """
+    return _ok(status=core.model_status(), missing=cfg.missing_models())
+
+
 @app.post("/api/model/load")
 async def api_model_load(payload: dict):
     """主动加载一套权重。用来把「首次生成的那十几秒」提前到用户可等待的时机。"""
@@ -427,6 +442,11 @@ def _run_job(jid: str, kind: str, p: dict) -> None:
             return
 
         # kind == "synth"
+        # 直调 API 可以省掉 language / size，服务端会兜底（Auto / 按档位挑）。
+        # 但合成记录里存的是原始 payload —— 省了就记成空串，回看时不知道当时用的哪套。
+        # 这里先归一化成「实际生效的值」，synthesize 拿到的输入完全等价。
+        p["language"] = p.get("language") or "Auto"
+        p["size"] = cfg.resolve_size(p.get("size"))
         _job_set(jid, state="running", progress=0.1,
                  message="正在准备模型 —— 首次使用该规格要加载权重并预热 CUDA graph，"
                          "通常十几到几十秒。")
@@ -576,7 +596,9 @@ def api_docs(request: Request):
             or getattr(r, "path", "").startswith(("/api", "/media"))}
     # 去掉 FastAPI 自动为 GET 路由附加的 HEAD
     real = {(p, tuple(m for m in ms if m.upper() != "HEAD")) for p, ms in real}
-    return {"ok": True, **api_docs_mod.render(real)}
+    # 示例里的地址按「调用方实际访问的那个」填 —— 换端口 / 换机器 / 走反代都对
+    base = str(request.base_url).rstrip("/")
+    return {"ok": True, **api_docs_mod.render(real, base=base)}
 
 
 @app.get("/")

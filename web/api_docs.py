@@ -127,6 +127,11 @@ ENDPOINTS: list[dict] = [
         ],
     },
     {
+        "method": "GET", "path": "/api/model", "group": "合成",
+        "desc": "当前驻留的权重、显存占用、缺失的权重目录。界面「系统设置」每次进入都读它。",
+        "params": [],
+    },
+    {
         "method": "POST", "path": "/api/model/load", "group": "合成",
         "desc": "主动加载一套权重（把首次生成的加载耗时提前到可等待的时机）。同一时刻只驻留一套。",
         "params": [
@@ -201,23 +206,26 @@ EXAMPLES: list[dict] = [
     {
         "title": "克隆一段语音（含情绪指令）",
         "lang": "bash",
-        "code": """curl -X POST http://127.0.0.1:7867/api/jobs \\
+        "code": """curl -X POST {base}/api/jobs \\
   -H "Content-Type: application/json" \\
   -d '{
     "mode": "clone",
     "text": "这句话我想说得压着点，别太用力。",
     "language": "Chinese",
-    "size": "1.7B",
-    "voice": "御姐",
+    "size": "auto",
+    "voice": "你的音色名",
     "instruct": "压低声音，语速偏慢，带一点克制"
   }'
+# voice 必须是音色库里已有的名字（见界面「音色库」页），否则会返回
+#   {"ok": false, "error": "音色库里没有 [xxx]。"}
+# size 用 auto 就按本机档位挑；显式写 1.7B / 0.6B 也行
 # → {"ok": true, "job": "a1b2c3d4e5f6"}
-# 再轮询：curl http://127.0.0.1:7867/api/jobs/a1b2c3d4e5f6""",
+# 再轮询：curl {base}/api/jobs/a1b2c3d4e5f6""",
     },
     {
         "title": "用文字描述捏一个音色",
         "lang": "bash",
-        "code": """curl -X POST http://127.0.0.1:7867/api/jobs \\
+        "code": """curl -X POST {base}/api/jobs \\
   -H "Content-Type: application/json" \\
   -d '{
     "mode": "design",
@@ -229,7 +237,7 @@ EXAMPLES: list[dict] = [
     {
         "title": "官方说话人 + 多人对话",
         "lang": "bash",
-        "code": """curl -X POST http://127.0.0.1:7867/api/jobs \\
+        "code": """curl -X POST {base}/api/jobs \\
   -H "Content-Type: application/json" \\
   -d '{
     "mode": "official",
@@ -242,13 +250,13 @@ EXAMPLES: list[dict] = [
     {
         "title": "剧本工坊（用音色库里的音色）",
         "lang": "bash",
-        "code": """curl -X POST http://127.0.0.1:7867/api/jobs \\
+        "code": """curl -X POST {base}/api/jobs \\
   -H "Content-Type: application/json" \\
   -d '{
     "mode": "script",
     "language": "Chinese",
     "size": "1.7B",
-    "text": "[韩立][压低了声音] 此丹的药力，恐怕不止于此。\\n[南宫婉] 你是说……"
+    "text": "[你的音色名][压低了声音] 此丹的药力，恐怕不止于此。\\n[另一个音色名] 你是说……"
   }'""",
     },
     {
@@ -256,13 +264,13 @@ EXAMPLES: list[dict] = [
         "lang": "python",
         "code": """import time, requests
 
-BASE = "http://127.0.0.1:7867"
+BASE = "{base}"
 
 jid = requests.post(f"{BASE}/api/jobs", json={
     "mode": "clone",
     "text": "先跑通流程，再谈音质。",
     "language": "Chinese",
-    "voice": "御姐",
+    "voice": "你的音色名",      # 换成音色库里已有的名字
     "instruct": "平静但有一点疲惫",
 }).json()["job"]
 
@@ -280,20 +288,37 @@ if r["state"] == "done":
 ]
 
 
-def render(real_routes: set | None = None) -> dict:
+def render(real_routes: set | None = None, base: str = "") -> dict:
     """返回接口清单；给了 ``real_routes`` 就顺带做一次对账。
 
     ``real_routes`` 形如 ``{("/api/jobs", ["GET", "POST"]), ...}``。
+
+    ``base`` 是调用方当前访问的地址（例如 ``http://127.0.0.1:7877``）。
+    示例里的 ``{base}`` 会被替换成它 —— 换端口、或从另一台机器/反代访问时，
+    复制出来的命令不用手改。没给就退回默认的 127.0.0.1:7867。
     """
     groups: dict[str, list[dict]] = {}
     for ep in ENDPOINTS:
         groups.setdefault(ep["group"], []).append(ep)
 
+    base = (base or "http://127.0.0.1:7867").rstrip("/")
+    examples = [{**ex, "code": ex["code"].replace("{base}", base)} for ex in EXAMPLES]
+
     payload: dict = {
         "endpoints": ENDPOINTS,
         "groups": [{"name": g, "items": items} for g, items in groups.items()],
-        "examples": EXAMPLES,
+        "examples": examples,
         "count": len(ENDPOINTS),
+        # 直调时要先知道的三件事，界面「API 对接」页示例上方会原样渲染
+        "notes": [
+            f"示例里的地址已经是「你现在访问的这个」：{base}。换端口、"
+            "从别的机器或反向代理进来，示例都跟着变，不用手改。",
+            "浏览器顶栏里的「语种 / 模型规格」只影响界面（存在浏览器本地）。"
+            "直连 API 不传这两个参数时，服务端按档位兜底：language 缺省 Auto、"
+            "size 缺省按显存自动挑（本机当前档位见「系统设置」）。要固定就显式传。",
+            "voice / 剧本里的角色名必须是音色库里已有的名字（大小写、空格都要一致），"
+            "否则直接返回「音色库里没有 [xxx]」。",
+        ],
     }
 
     if real_routes is not None:
