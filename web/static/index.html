@@ -239,9 +239,7 @@ a{color:var(--accent); text-decoration:none}
 .stack{display:flex; flex-direction:column; gap:16px; min-width:0}
 .rail{position:sticky; top:22px; display:flex; flex-direction:column; gap:16px}
 .railact{display:flex; flex-direction:column; gap:6px}
-/* 右栏生成卡：只剩主按钮和一句提示 —— 参数与驻留状态都在顶部状态带里 */
-.rail-panel{display:flex; flex-direction:column; gap:12px}
-.rail-go{display:flex; flex-direction:column; gap:7px}
+/* 右栏生成卡：只有一个主按钮 —— 参数与驻留状态都在顶部栏，进度在结果卡里 */
 
 /* ============================ 卡片 ============================ */
 .card{background:var(--surface); border-radius:var(--r-lg); box-shadow:var(--sh-1); overflow:hidden}
@@ -521,7 +519,11 @@ html[data-theme="dark"] .btn--danger:hover{color:var(--bg)}
 
 /* ============================ 结果区 ============================ */
 .result__idle{display:flex; flex-direction:column; align-items:center; gap:14px;
-  padding:30px 22px 32px; text-align:center}
+  padding:30px 22px 20px; text-align:center}
+/* 主按钮做成结果卡的**页脚**：以前它另开一张卡，右栏就成了两块互不相干的盒子
+   （一张没内容的空卡 + 一张只有按钮的卡）。一条发丝线足以分开"内容"和"操作"。 */
+.card__foot{padding:14px 20px 18px; border-top:1px solid var(--line)}
+.card__foot .btn{width:100%}
 .orb{width:66px; height:66px; border-radius:50%; display:grid; place-items:center;
   background:var(--surface-2); color:var(--text-3)}
 .result__idle p{margin:0; font-size:13px; color:var(--text-2); line-height:1.7}
@@ -542,14 +544,45 @@ html[data-theme="dark"] .btn--danger:hover{color:var(--bg)}
 .pmeta__c.is-wide{grid-column:1 / -1}
 .pmeta__c i{flex:0 0 4.3em; font-style:normal; font-size:11.5px; color:var(--text-3)}
 .pmeta__c b{min-width:0; font-size:12.5px; font-weight:600; overflow-wrap:anywhere}
+/* 结果卡里的参数：**一行一对**，标签列按"最宽的那个标签"定宽（max-content）。
+   原来是 1fr 1fr 两列 + 部分项跨列，于是「模型规格 | 语种」被挤到第三行、
+   上下行一宽一窄，看着像没排好。这样每行都从同一条竖线开始，读起来是张规格表。 */
+.pmeta--rows{display:grid; grid-template-columns:max-content minmax(0, 1fr);
+  gap:6px 12px; align-items:baseline}
+.pmeta--rows i{font-style:normal; font-size:11.5px; color:var(--text-3); white-space:nowrap}
+.pmeta--rows b{min-width:0; font-size:12.5px; font-weight:600; overflow-wrap:anywhere}
 .run{padding:0 20px 18px}
-.bar{height:5px; border-radius:var(--r-full); background:var(--surface-3); overflow:hidden}
-.bar i{display:block; height:100%; width:0; border-radius:var(--r-full);
+/* 生成中：一行「声波跳动 · 阶段 · 百分比」，下面是带流光的进度条。
+   声波用 5 根竖条交错缩放 —— 比转圈更贴 TTS 这件事，也不需要额外资源。 */
+.run__top{display:flex; align-items:center; gap:9px; margin-bottom:10px}
+.eq{flex:0 0 auto; display:inline-flex; align-items:flex-end; gap:2.5px; height:16px}
+.eq i{display:block; width:3px; border-radius:2px; background:var(--accent);
+  transform-origin:bottom; animation:eq 1.05s ease-in-out infinite}
+.eq i:nth-child(1){height:8px;  animation-delay:-.75s}
+.eq i:nth-child(2){height:14px; animation-delay:-.5s}
+.eq i:nth-child(3){height:11px; animation-delay:-.25s}
+.eq i:nth-child(4){height:16px; animation-delay:-.9s}
+.eq i:nth-child(5){height:9px;  animation-delay:-.35s}
+@keyframes eq{0%,100%{transform:scaleY(.35)}50%{transform:scaleY(1)}}
+.run__stage{min-width:0; font-size:12.5px; font-weight:550; color:var(--text-2);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.run__pct{margin-left:auto; flex:0 0 auto; font-size:15px; font-weight:650;
+  color:var(--text); font-variant-numeric:tabular-nums; letter-spacing:-.01em}
+.bar{height:6px; border-radius:var(--r-full); background:var(--surface-3); overflow:hidden}
+.bar i{display:block; height:100%; width:0; border-radius:var(--r-full); position:relative;
+  overflow:hidden;
   background:linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 60%, #A97BFF));
-  transition:width .35s ease}
-.bar.indet i{width:34%; animation:slide 1.25s cubic-bezier(.4,0,.2,1) infinite}
-@keyframes slide{0%{margin-left:-34%}100%{margin-left:100%}}
-.run__msg{margin:10px 0 0; font-size:12.5px; color:var(--text-2); white-space:pre-line}
+  transition:width .4s cubic-bezier(.4,0,.2,1)}
+/* 流光：条子还在走的时候才有，完成时整个 .run 会被藏掉 */
+.bar i::after{content:""; position:absolute; inset:0;
+  background:linear-gradient(90deg, transparent, rgba(255,255,255,.6), transparent);
+  transform:translateX(-100%); animation:shine 1.7s linear infinite}
+@keyframes shine{to{transform:translateX(100%)}}
+.run__msg{margin:9px 0 0; font-size:11.5px; color:var(--hint); font-variant-numeric:tabular-nums}
+@media (prefers-reduced-motion: reduce){
+  .eq i, .bar i::after{animation:none}
+  .bar i{transition:width .1s linear}
+}
 
 /* ============================ 提示条 ============================
    颜色只出现在三处：左侧色条、图标、小标题。**正文一律 --text-2**。
@@ -2020,7 +2053,6 @@ function createEditor(host, opts = {}) {
    5. 生成参数：抽取与呈现
    结果卡与合成记录**共用同一份抽取逻辑**，两处口径才不会分叉。
    ============================================================================ */
-const WIDE_KEYS = new Set(["音色", "音色描述", "情感指令", "说话人", "模式"]);
 
 function speakerLabel(key) {
   const s = (BOOT.speakers || []).find((x) => x.key === (key || "").toLowerCase());
@@ -2046,12 +2078,13 @@ function paramPairs(p) {
   return out;
 }
 
-function paramsHTML(p) {
+// 结果卡里的「本次参数」表。info.took 是这次实际等了多少秒（只成功的结果才传）。
+function paramsHTML(p, info) {
   const pairs = paramPairs(p || {});
   if (!pairs.length) return "";
-  return `<div class="pmeta__t">本次参数</div><div class="pmeta">`
-    + pairs.map(([k, v]) => `<div class="pmeta__c${WIDE_KEYS.has(k) ? " is-wide" : ""}">`
-      + `<i>${esc(k)}</i><b>${esc(v)}</b></div>`).join("") + `</div>`;
+  if (info && info.took != null) pairs.push(["生成耗时", info.took.toFixed(1) + " s"]);
+  return `<div class="pmeta__t">本次参数</div><div class="pmeta pmeta--rows">`
+    + pairs.map(([k, v]) => `<i>${esc(k)}</i><b>${esc(v)}</b>`).join("") + `</div>`;
 }
 
 /* ============================================================================
@@ -2060,7 +2093,7 @@ function paramsHTML(p) {
 const ORB = `<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor"
   stroke-width="1.7" stroke-linecap="round"><path d="M12 2v20M7 7v10M17 7v10M3 11v2M21 11v2"/></svg>`;
 
-function createResult(host) {
+function createResult(host, { prefix = "", goLabel = "生成语音" } = {}) {
   host.innerHTML = `
     <div class="card card--lift">
       <div class="card__head">
@@ -2077,10 +2110,18 @@ function createResult(host) {
       <div class="hidden params" data-role="params"></div>
       <div class="hidden result__acts" data-role="acts"></div>
       <div class="hidden run" data-role="run">
+        <div class="run__top">
+          <span class="eq" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+          <span class="run__stage" data-role="stage">准备中…</span>
+          <span class="run__pct" data-role="pct">0%</span>
+        </div>
         <div class="bar" data-role="bar"><i></i></div>
         <p class="run__msg" data-role="msg"></p>
       </div>
       <div class="notes" data-role="alerts"></div>
+      ${prefix ? `<div class="card__foot">
+        <button class="btn btn--primary btn--lg btn--block" id="${prefix}-go">${esc(goLabel)}</button>
+      </div>` : ""}
     </div>`;
   const R = {
     root: host.firstElementChild,
@@ -2089,6 +2130,7 @@ function createResult(host) {
     params: $('[data-role=params]', host), acts: $('[data-role=acts]', host),
     run: $('[data-role=run]', host),
     bar: $('[data-role=bar]', host), barfill: $('[data-role=bar] i', host),
+    stage: $('[data-role=stage]', host), pct: $('[data-role=pct]', host),
     msg: $('[data-role=msg]', host), alerts: $('[data-role=alerts]', host),
   };
   R.player = buildPlayer(R.playerbox);
@@ -2116,7 +2158,7 @@ function paintResult(R, d) {
   R.metrics.innerHTML = m.map(([k, v]) => `<span class="metric">${esc(k)}<b>${esc(v)}</b></span>`).join("");
   R.metrics.classList.toggle("hidden", !m.length);
 
-  const ph = paramsHTML(d.params);
+  const ph = paramsHTML(d.params, { took: d.took });
   R.params.innerHTML = ph;
   R.params.classList.toggle("hidden", !ph);
   R.params.classList.toggle("is-first", !d.url);
@@ -2149,30 +2191,58 @@ function paintResult(R, d) {
    ============================================================================ */
 let HISTORY_DIRTY = false;
 
+/* 生成中的进度呈现。
+   后端只在 0.1（开始）/ 0.92（写文件）/ 1.0（完成）三个点有真话 —— 中间那段是
+   「一次不可分割的模型调用」，拿不到细分进度。所以这里**锚点用真的、段内按时间缓动逼近**，
+   并且**封顶 89%**：只有后端真报了 0.92 才跨过去。
+   这样数字一直在动（说明还活着），但永远不会提前宣称「快好了」。 */
+function paintRun(R, st, elapsed) {
+  const real = Number(st.progress || 0);
+  let pct, stage;
+  if (real >= 0.9) {
+    pct = Math.round(real * 100);
+    stage = real >= 1 ? "正在收尾…" : "正在写入文件…";
+  } else {
+    // 4% 起步、14 秒一个时间常数 —— 前 10 秒走得快，后面越来越慢，逼近但到不了 89%
+    pct = Math.min(89, Math.round(4 + 85 * (1 - Math.exp(-elapsed / 14))));
+    // 阶段按「权重是否已驻留」分：还没加载完就说「正在生成」是假话
+    stage = (BOOT.model_status || {}).loaded ? "正在生成音频…" : "正在加载权重…";
+  }
+  R.stage.textContent = stage;
+  R.pct.textContent = pct + "%";
+  R.barfill.style.width = pct + "%";
+  R.msg.textContent = `已等待 ${elapsed.toFixed(0)} 秒`;
+  R.msg.title = String(st.message || "");   // 后端原话留在 tooltip 里，别丢信息
+}
+
 async function runJob(payload, R) {
   if (R) {
     R.run.classList.remove("hidden");
-    R.bar.classList.add("indet");
+    R.idle.classList.add("hidden");     // 空态那句「填好左侧内容…」不能和进度条同时挂着
+    R.bar.classList.remove("indet");
     R.barfill.style.width = "0";
-    R.msg.textContent = "正在提交任务…";
+    R.stage.textContent = "正在提交任务…";
+    R.pct.textContent = "0%";
+    R.msg.textContent = "";
+    R.badge.dataset.state = "running";
+    R.badge.textContent = "生成中…";
     R.alerts.innerHTML = "";
   }
   const t0 = Date.now();
   try {
     const { job } = await post("/api/jobs", payload);
     let st = null;
+    // 权重是**生成开始时**才加载的（首次要几秒）。如果只在 job 结束后刷一次状态，
+    // 整个生成期间顶栏都会停在「未加载」—— 明明模型早就驻留了。
+    // 所以边轮询边对状态，2 秒一次（一次 GET，很轻）。
+    let lastModelPoll = 0;
     for (;;) {
       st = await api("/api/jobs/" + job);
-      if (R) {
-        const el = (Date.now() - t0) / 1000;
-        // 生成是「一次不可分割的模型调用」，后端只能报出 0.1 / 0.92 / 1.0 三个点。
-        // 因此中间那段长等待**如实**用不确定进度条 + 计时器呈现，
-        // 而不是把 10% 摆在那里假装在走 —— 后者会让人以为卡死了。
-        const determinate = (st.progress || 0) >= 0.9;
-        R.bar.classList.toggle("indet", !determinate);
-        if (determinate) R.barfill.style.width = Math.round(st.progress * 100) + "%";
-        R.msg.textContent = `${st.message || "生成中…"}（已等待 ${el.toFixed(0)} 秒）`;
+      if (Date.now() - lastModelPoll > 2000) {
+        lastModelPoll = Date.now();
+        refreshModelStatus();      // 内部自带 catch，不会打断生成
       }
+      if (R) paintRun(R, st, (Date.now() - t0) / 1000);
       if (st.state === "done" || st.state === "error") break;
       await new Promise((r) => setTimeout(r, 400));
     }
@@ -2190,6 +2260,8 @@ async function runJob(payload, R) {
     if (R) paintResult(R, {
       url: res.url, file: res.file, duration: res.duration, level: res.level,
       message: st.message, params: payload,
+      // 从提交到出结果的整段等待（含排队 + 可能的权重加载），不是音频长度
+      took: (Date.now() - t0) / 1000,
     });
     toast("生成完成", "ok");
     return { ok: true, res, message: st.message };
@@ -2311,24 +2383,14 @@ function paintRailDefaults() {
   if ($("#o-note-06")) renderOfficialNote();
 }
 
-function renderRail(prefix, { sizes = null, goLabel = "生成语音", tip = "" } = {}) {
+function renderRail(prefix, { sizes = null, goLabel = "生成语音" } = {}) {
   RAIL_SIZES[prefix] = sizes || BOOT.sizes || ["1.7B", "0.6B"];
 
-  // 顺序：结果卡 → 生成卡。语种/规格/驻留状态都在顶部状态带里，
-  // 这里只留动作，右栏从此不用再为「参数」留位置。
-  $(`#${prefix}-rail`).innerHTML = `
-    <div id="${prefix}-result"></div>
+  // 右栏就一张卡：上面是结果（空态 / 进度 / 播放器 / 参数），主按钮做它的页脚。
+  // 语种/规格/驻留状态在顶部栏，进度在卡片内部，这里不该再冒出第二块东西。
+  $(`#${prefix}-rail`).innerHTML = `<div id="${prefix}-result"></div>`;
 
-    <div class="card">
-      <div class="card__body rail-panel">
-        <div class="rail-go">
-          <button class="btn btn--primary btn--lg btn--block" id="${prefix}-go">${esc(goLabel)}</button>
-          ${tip ? `<p class="hint hint--center">${esc(tip)}</p>` : ""}
-        </div>
-      </div>
-    </div>`;
-
-  const R = createResult($(`#${prefix}-result`));
+  const R = createResult($(`#${prefix}-result`), { prefix, goLabel });
   return {
     R,
     lang: () => genLang(),
@@ -3007,9 +3069,10 @@ function initClone() {
   inst.addEventListener("change", syncInstructTip);
   syncInstructTip();
 
-  RAILS.c = renderRail("c", {
-    tip: "生成期间可以继续编辑，结果会自己刷新。",
-  });
+  // 这页原来有一句「生成期间可以继续编辑，结果会自己刷新」—— 前半句是真的，
+  // 后半句是假的：payload 是点按钮那一刻的快照，生成期间改文本不会影响这一条结果。
+  // 与其留一句要用户自己发现上当的话，不如不写；进度条本身就说明「还在跑」。
+  RAILS.c = renderRail("c");
   renderAdv("c", [
     "克隆模式下，参考音频的质量比模型规格更重要 —— 干净的 5 秒人声，胜过嘈杂的 30 秒。",
   ]);
