@@ -184,6 +184,11 @@ a{color:var(--accent); text-decoration:none}
 .main{min-width:0; display:flex; flex-direction:column}
 .content{flex:1; padding:0 34px 72px; max-width:1400px; width:100%; margin:0 auto}
 
+/* 汉堡按钮只在手机端出现（抽屉入口，见文件末尾的手机端块） */
+.tb-burger{display:none; width:38px; height:38px; margin-left:-6px; border-radius:var(--r-sm);
+  align-items:center; justify-content:center; color:var(--text-2); flex:0 0 auto}
+.tb-burger:hover{background:var(--surface-2)}
+
 /* ============================ 工作台顶栏 ============================
    应用级 chrome：左边是当前位置，右边是「语种 / 规格」就地可改、模型驻留状态、
    系统设置入口。sticky 在内容区上方 —— 左栏很长，滚下去的时候这两样不该跟着滚走。
@@ -861,6 +866,96 @@ a.btn{text-decoration:none}
   .envchip{justify-content:center; padding:8px}
   .content{padding:0 18px 60px}
 }
+/* ============================================================================
+   手机端（≤720px）：抽屉导航 + 吸底主按钮 + 密度重排
+   实测 390×844 的问题：
+     · 主按钮距顶 1826px —— 要滑过两屏半才够得到，最该按的键反而最难按
+     · 导航是一条 8 个 35×35 的无文字图标带，靠横滑才看全，点错就是另一个页面
+     · 输入框 14.5px —— iOS Safari 聚焦时自动放大页面，手指头再去点缩小
+   所以这里只做三件事：够得到、看得懂、点得准。装饰性的一律让路。
+   ============================================================================ */
+@media (max-width:720px){
+  /* --- 一、导航：图标带 → 左侧抽屉 ----------------------------------- */
+  :root{--sidebar-w:0px}
+  .shell{grid-template-columns:minmax(0,1fr)}
+  .sidebar{
+    position:fixed; top:0; bottom:0; left:0; z-index:120;
+    width:min(86vw,320px); height:100dvh; padding:14px 12px 18px; gap:2px;
+    transform:translateX(-103%); transition:transform .26s cubic-bezier(.32,.72,0,1);
+    background:var(--surface); border-right:1px solid var(--line);
+    box-shadow:var(--sh-3); overflow-y:auto; overscroll-behavior:contain;
+    /* <=900px 那条把 .sidebar 改成了 row + center（横向图标带）。这里必须两样都改回来：
+       不改 flex-direction，brand/nav/foot 会挤在一行，nav 只分到 77px；
+       不改 align-items，子元素不撑宽。中文没有词边界，宽度一小就逐字换行。 */
+    flex-direction:column; align-items:stretch;
+  }
+  body.drawer-open .sidebar{transform:none}
+  .brand{padding:6px 8px 14px}
+  .brand__t{display:block}          /* 品牌名回来：抽屉里需要有个头 */
+  .nav{flex-direction:column; gap:2px}
+  .nav__sep{display:block; margin:8px 6px}
+  .navitem{height:48px; padding:0 12px; gap:13px; justify-content:flex-start;
+    border-radius:var(--r-sm)}
+  .navitem span{display:block; font-size:14.5px; color:var(--text-2)}
+  .navitem[aria-current="page"] span{color:var(--text)}
+  .sidebar__foot{margin-top:auto; padding-top:14px; flex-direction:column}
+  .envchip__t,.envchip__chev{display:block}
+  .navscrim{position:fixed; inset:0; z-index:110; background:rgba(11,14,22,.44);
+    opacity:0; transition:opacity .24s}
+  body.drawer-open .navscrim{opacity:1}
+
+  /* --- 二、主按钮吸底 ------------------------------------------------- */
+  /* 结果卡的页脚用 display:contents 让位：按钮脱离卡片直接吸到屏幕底部，
+     卡片底部不会留一块空白，DOM 里也只有这一个按钮（不会重复朗读/重复 Tab）。 */
+  .card__foot--go{display:contents}
+  .mob-go{position:fixed; left:0; right:0; bottom:0; z-index:95;
+    height:auto; min-height:54px; padding:0 16px calc(10px + env(safe-area-inset-bottom));
+    border-radius:0; box-shadow:0 -1px 0 var(--line), 0 -10px 28px -12px rgba(17,22,38,.22)}
+  /* 右栏底部留出吸底按钮的高度，最后一张卡不会被它盖住 */
+  .rail{padding-bottom:calc(78px + env(safe-area-inset-bottom))}
+
+  /* --- 三、顶栏只留"去哪 + 现在什么状态" ----------------------------- */
+  .tb-burger{display:inline-flex}
+  .tb-field,.tb-sep{display:none}   /* 语种 / 规格移到「系统设置」里改 */
+  .topbar__in{padding:0 14px; height:52px; gap:8px}
+  .tb-status{height:34px; padding:0 11px; font-size:12.5px}
+  .iconbtn--sm{width:34px; height:34px}
+
+  /* --- 四、密度：手机上字号和间距都要往"手指"调整 --------------------- */
+  .content{padding:0 14px 56px}
+  .pagehead{padding:18px 0 14px; gap:12px}
+  .pagehead__t h1{font-size:22px}
+  .pagehead__t p{margin-top:4px; font-size:13px}
+  .pagehead__act{width:100%; margin-top:10px}
+  .stack{gap:12px}
+  .card__head{padding:14px 14px 0; gap:8px}
+  .card__head h2{font-size:14px}
+  .card__body{padding:14px}
+  .card__foot{padding:12px 14px 14px}
+  .two{gap:10px}
+  .field + .field{margin-top:12px}
+  .hint{font-size:12.5px}
+  .metric{font-size:12px; padding:6px 10px}
+  .pmeta--rows{gap:7px 10px}
+
+  /* --- 五、点得准：字号 16px 起（iOS 不再自动放大），控件不低于 44px --- */
+  .input,.textarea,.select-native,.tb-sel{font-size:16px}
+  .input{height:46px}
+  .textarea{min-height:132px}
+  .btn{min-height:44px}
+  .btn--sm{height:38px; padding:0 13px; font-size:13px}
+  .btn--lg{height:50px}
+  .pickbtn{min-height:56px}
+  .navitem svg,.envchip svg{flex:0 0 auto}
+
+  /* --- 六、手感：去掉移动端的高亮方块，按下有明确反馈 ------------------- */
+  *{-webkit-tap-highlight-color:transparent}
+  .btn:active,.navitem:active,.pickbtn:active,.metric:active{transform:scale(.985)}
+  .btn,.navitem,.pickbtn{transition:transform .12s ease, background-color .12s ease}
+  /* iPhone 底部横条区域别被吸底按钮压住 */
+  .page{padding-bottom:env(safe-area-inset-bottom)}
+}
+
 @media (prefers-reduced-motion:reduce){ *{animation:none !important; transition:none !important} }
 </style>
 </head>
@@ -870,7 +965,7 @@ a.btn{text-decoration:none}
 
 <div class="shell hidden" id="app">
   <!-- ============================ 左导航 ============================ -->
-  <aside class="sidebar">
+  <aside class="sidebar" id="sidebar">
     <div class="brand">
       <span class="mark" aria-hidden="true">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -964,6 +1059,11 @@ a.btn{text-decoration:none}
          这两样原来挂在每页右栏的卡里 —— 看的时候占地方，改的时候还得先切页。 -->
     <header class="topbar">
       <div class="topbar__in">
+        <button class="tb-burger" id="tb-burger" type="button"
+                aria-label="打开菜单" aria-expanded="false" aria-controls="sidebar">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round"><path d="M3.5 7h17M3.5 12h17M3.5 17h17"/></svg>
+        </button>
         <div class="topbar__right">
           <label class="tb-field">
             <span class="tb-field__k">语种</span>
@@ -991,6 +1091,8 @@ a.btn{text-decoration:none}
         </div>
       </div>
     </header>
+
+    <div class="navscrim" id="nav-scrim" hidden></div>
 
     <main class="content">
       <!-- ==================== 语音克隆 ==================== -->
@@ -2115,8 +2217,8 @@ function createResult(host, { prefix = "", goLabel = "生成语音" } = {}) {
         <p class="run__msg" data-role="msg"></p>
       </div>
       <div class="notes" data-role="alerts"></div>
-      ${prefix ? `<div class="card__foot">
-        <button class="btn btn--primary btn--lg btn--block" id="${prefix}-go">${esc(goLabel)}</button>
+      ${prefix ? `<div class="card__foot card__foot--go">
+        <button class="btn btn--primary btn--lg btn--block mob-go" id="${prefix}-go">${esc(goLabel)}</button>
       </div>` : ""}
     </div>`;
   const R = {
@@ -2128,6 +2230,9 @@ function createResult(host, { prefix = "", goLabel = "生成语音" } = {}) {
     bar: $('[data-role=bar]', host), barfill: $('[data-role=bar] i', host),
     stage: $('[data-role=stage]', host), pct: $('[data-role=pct]', host),
     msg: $('[data-role=msg]', host), alerts: $('[data-role=alerts]', host),
+    // 手机上这块卡的主按钮要吸在屏幕底部，生成期间还会在上面写进度 —— 先拿住它
+    go: prefix ? $(`#${prefix}-go`) : null,
+    goLabel,
   };
   R.player = buildPlayer(R.playerbox);
   return R;
@@ -2137,6 +2242,7 @@ function paintResult(R, d) {
   R.run.classList.add("hidden");
   R.bar.classList.remove("indet");
   R.idle.classList.add("hidden");
+  setGoText(R, R.goLabel);          // 生成结束：吸底按钮把文案还回去
   const lvl = d.level || "ok";
   R.badge.dataset.state = lvl === "ok" ? "done" : (lvl === "warn" ? "warn" : "error");
   R.badge.textContent = lvl === "ok" ? "已完成" : (lvl === "warn" ? "完成（有提示）" : "失败");
@@ -2206,9 +2312,17 @@ function paintRun(R, st, elapsed) {
   }
   R.stage.textContent = stage;
   R.pct.textContent = pct + "%";
+  setGoText(R, `生成中 ${pct}%`);
   R.barfill.style.width = pct + "%";
   R.msg.textContent = `已等待 ${elapsed.toFixed(0)} 秒`;
   R.msg.title = String(st.message || "");   // 后端原话留在 tooltip 里，别丢信息
+}
+
+/* 手机上主按钮吸在屏幕底部，那儿是唯一一直在视野里的地方 —— 生成期间把进度写上去，
+   不用滚到长表单底下才看得到。只在手机端改文案，桌面端的按钮保持原样
+   （桌面进度就在按钮正上方的结果卡里，再写一遍是冗余）。 */
+function setGoText(R, text) {
+  if (R && R.go && window.matchMedia("(max-width: 720px)").matches) R.go.textContent = text;
 }
 
 async function runJob(payload, R) {
@@ -2223,6 +2337,7 @@ async function runJob(payload, R) {
     R.badge.dataset.state = "running";
     R.badge.textContent = "生成中…";
     R.alerts.innerHTML = "";
+    setGoText(R, "准备中…");
   }
   const t0 = Date.now();
   try {
@@ -2259,6 +2374,15 @@ async function runJob(payload, R) {
       // 用服务端报的合成耗时（和合成记录里那个数一致）；老服务端没这个字段时退回前端掐的
       took: res.took ?? (Date.now() - t0) / 1000,
     });
+
+    // 手机上结果卡在长表单底下（要滑过两屏），生成完了得把视线自己带过去。
+    // 桌面端结果卡就在右栏、本来就在视野里，这个判断不会触发。
+    if (R) {
+      const box = R.root.getBoundingClientRect();
+      if (box.top < 0 || box.bottom > window.innerHeight) {
+        R.root.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }
     toast("生成完成", "ok");
     return { ok: true, res, message: st.message };
   } catch (e) {
@@ -4286,6 +4410,21 @@ async function loadApiDocs(force) {
 const VIEWS = ["clone", "design", "official", "script", "library", "history", "api", "settings"];
 const LOADED = new Set();
 
+/* 手机端导航抽屉。侧栏在 <=720px 时变成从左侧滑出的面板（样式在文件末尾的手机端块）。
+   桌面上没有汉堡按钮，所以 >=721px 时 setDrawer(true) 直接忽略。 */
+const DESKTOP_MQ = "(min-width: 721px)";
+
+function setDrawer(open) {
+  if (open && window.matchMedia(DESKTOP_MQ).matches) return;
+  document.body.classList.toggle("drawer-open", open);
+  const scrim = $("#nav-scrim");
+  if (scrim) scrim.hidden = !open;
+  const burger = $("#tb-burger");
+  if (burger) burger.setAttribute("aria-expanded", open ? "true" : "false");
+  // 抽屉开着时锁住背景滚动：否则手指在遮罩上滑，底下的页面会跟着一起动
+  document.documentElement.style.overflow = open ? "hidden" : "";
+}
+
 function gotoView(name) {
   if (!VIEWS.includes(name)) name = "clone";
   // 试听的声音不能跟着进别的视图：播放器宿主留在官方页里，那边已经没地方按暂停了
@@ -4620,7 +4759,22 @@ async function boot() {
   syncVoiceCache();
   $("#brand-sub").textContent = `Studio · ${BOOT.hardware?.is_gpu ? "GPU" : "CPU"}`;
 
-  $$("#nav .navitem").forEach((b) => b.addEventListener("click", () => gotoView(b.dataset.view)));
+  $$("#nav .navitem").forEach((b) => b.addEventListener("click", () => {
+    gotoView(b.dataset.view);
+    setDrawer(false);            // 手机上抽屉盖着页面，选完就走
+  }));
+
+  // --- 手机端抽屉的开关 -------------------------------------------------
+  $("#tb-burger").addEventListener("click", () =>
+    setDrawer(!document.body.classList.contains("drawer-open")));
+  $("#nav-scrim").addEventListener("click", () => setDrawer(false));
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && document.body.classList.contains("drawer-open")) setDrawer(false);
+  });
+  // 视口从窄拉回宽时清干净：抽屉的 transform 还挂着会挡住桌面侧栏
+  window.matchMedia(DESKTOP_MQ).addEventListener("change", (e) => {
+    if (e.matches) setDrawer(false);
+  });
   $$("[data-goto]").forEach((b) => b.addEventListener("click", () => gotoView(b.dataset.goto)));
   $("#env-btn").addEventListener("click", () => openEnv(true));
   $("#drawer-close").addEventListener("click", () => openEnv(false));
