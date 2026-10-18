@@ -91,6 +91,11 @@ ENDPOINTS: list[dict] = [
         "params": [("ref_text", "str", "参考音频实际说的字")],
     },
     {
+        "method": "POST", "path": "/api/voices/{name}/star", "group": "音色库",
+        "desc": "收藏或取消收藏。只影响音色库列表的置顶顺序，不参与合成、不改音频与基因。",
+        "params": [("starred", "bool", "true 收藏，false 取消")],
+    },
+    {
         "method": "POST", "path": "/api/voices/{name}/prompt", "group": "音色库",
         "desc": "生成音色基因（.pt）。需加载模型，故返回 job id，用 /api/jobs/{id} 轮询。"
                 "保存音色时也会自动排一个同样的任务。",

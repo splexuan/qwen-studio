@@ -522,6 +522,10 @@ html[data-theme="dark"] .btn--danger:hover{color:var(--bg)}
   flex:0 0 auto; max-width:46%; font-size:var(--fs-base); font-weight:650; color:var(--text);
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
+/* 收藏标记：只是让「为什么它排在最前面」有个解释，不是可点的按钮 ——
+   真要点星标去音色库点，这里点一下应该是「选中这个音色」。 */
+.vrow__star{font-style:normal; color:var(--warn); font-size:11px; margin-right:3px;
+  vertical-align:1px}
 /* 只有「当前正在用的那个」才吃强调色 —— 列表里每一行都是紫的，紫就等于没有重点 */
 .vrow.is-on .vrow__n{color:var(--accent)}
 .vrow__m{
@@ -762,15 +766,71 @@ html[data-theme="dark"] .btn--danger:hover{color:var(--bg)}
 .vitem:hover{box-shadow:var(--sh-2); transform:translateY(-1px)}
 .vitem.is-sel{border-color:var(--accent); box-shadow:var(--sh-2)}
 .vitem.is-picked{border-color:var(--accent-line); background:var(--accent-soft)}
-.vitem__top{display:flex; align-items:center; gap:var(--s-2)}
+/* 卡片里名字一行、标签一行。flex-basis:100% 必须配 flex-wrap:wrap 才换得下去 ——
+   少了 wrap，标签会挤在同一行并把名字压成 0 宽（名字直接看不见，不是 ellipsis）。
+   行式视图反过来：pills 用 display:contents 打散，且不允许换行。 */
+.vitem__top{display:flex; align-items:center; gap:var(--s-2); flex-wrap:wrap}
+.vitem--row .vitem__top{flex-wrap:nowrap}
 /* 名字是这一屏唯一的检索目标：卡片长得都一样，眼睛是顺着名字找的。
    给它强调色，满屏灰字里才跳得出来。 */
-.vitem__name{font-size:var(--fs-base); font-weight:650; min-width:0; color:var(--text);
+.vitem__name{flex:1 1 auto; font-size:var(--fs-base); font-weight:700; min-width:0; color:var(--text);
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+/* 三个标签（克隆方式 / 时长 / 基因）在卡片里单独占一行。
+   塞在名字同一行的话，名字只剩 ellipsis 的份（"白衣..."），
+   pill 自己也被挤成「完整 / ICL」两行 —— 两头都看不清。
+   行式视图反过来：display:contents 把容器打散，标签回到名字右边同一行。 */
+.vitem__pills{display:flex; align-items:center; gap:var(--s-1); flex-wrap:nowrap; min-width:0}
+.vitem:not(.vitem--row) .vitem__pills{flex:0 0 100%; margin-top:var(--s-2)}
+.vitem--row .vitem__pills{display:contents}
 .vitem__ref{margin:var(--s-2) 0 0; font-size:var(--fs-sm); color:var(--text-3); line-height:1.6;
   white-space:pre-line;   /* 参考文本里的换行是真换行，别在卡片上折成空格 */
   display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; min-height:40px}
-.vitem__foot{display:flex; align-items:center; gap:var(--s-2); margin-top:var(--s-3); flex-wrap:wrap}
+.vitem__foot{display:flex; align-items:center; gap:var(--s-2); margin-top:var(--s-3)}
+/* 三个操作按钮在卡片里必须是一行（「参考文本」已并入「编辑」，见 openNewVoiceDialog）。
+   用 flex-wrap 的话，只要总宽比卡片内宽多出几像素，最后一个就被挤到第二行 ——
+   同一屏里有卡片换行、有的不换行，看着参差不齐。等分网格把这件事定死：
+   每格 minmax(0,1fr) 允许压缩，按钮内文字 nowrap，宽度不够时压的是留白不是文字。
+   只作用在卡片视图：行式视图（.vitem--row）要继续用 flex，才能和名字挤在一行。 */
+.vitem:not(.vitem--row) .vitem__foot{
+  display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:var(--s-1);
+}
+.vitem:not(.vitem--row) .vitem__foot .btn{
+  min-width:0; padding-inline:4px; white-space:nowrap; justify-content:center;
+}
+/* 收藏星：卡片上一个可点的图标。未收藏时淡到几乎看不见（不抢名字的视线），
+   收藏后实心暖色 —— 一眼能扫出哪些是常用的。 */
+.vstar{border:0; background:none; padding:0 3px 0 0; cursor:pointer; line-height:1;
+  font-size:15px; color:var(--text-3); opacity:.35;
+  transition:opacity .12s, color .12s, transform .12s}
+.vstar:hover{opacity:1; color:var(--warn); transform:scale(1.1)}
+.vstar.on{opacity:1; color:var(--warn)}
+
+/* ---- 紧凑列表：同一套 DOM，只换排列方式 ----
+   不另写模板，是因为试听插槽、多选、四个操作按钮都要跟着走；
+   复制一份渲染逻辑，两边迟早对不上（这个文件已经踩过几次这种坑）。 */
+.vgrid--row{grid-template-columns:1fr; gap:var(--s-1)}
+.vitem--row{display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-2);
+  padding:var(--s-2) 34px var(--s-2) var(--s-3); border-radius:var(--r)}
+.vitem--row:hover{transform:none}          /* 一行一行地跳，看着晃眼 */
+.vitem--row .vitem__top{flex:1 1 auto; min-width:0; margin:0}
+.vitem--row .vitem__ref{display:none}      /* 参考文本不展示：留着就白省这一行了 */
+.vitem--row .vitem__foot{margin:0; flex:0 0 auto; flex-wrap:nowrap}
+.vitem--row .hrow__slot{flex:1 1 100%}     /* 点开试听时，播放器占满整行 */
+.vitem--row .vcheck{top:50%; transform:translateY(-50%)}
+/* 窄屏上只留「试听」。390px 的可用宽度是 312px（两侧 padding 46），
+   而「名字 + 完整ICL + 时长 + 基因」挤到 265px，加试听 56px 就是 329 —— 差 17px 换行，
+   一行变两行、行高从 50 回到 95，紧凑视图等于白做。
+   所以砍掉「基因」pill（当前默认走完整 ICL，那个 .pt 本来就不参与预热）。 */
+@media (max-width:640px){
+  /* 不能靠 flex-wrap 让按钮换行来解决 —— 换行就是把行高撑回去。
+     真凶是 .vitem__top 的 flex-grow:1：窄屏上它吃满整行宽度，右边按钮只能去下一行。
+     改成 flex:0 1 auto，靠 shrink 压名字（名字本来就有 ellipsis）。
+     播放器插槽是 flex-basis:100%，展开时照样独占一行。 */
+  .vitem--row .vitem__top{flex:0 1 auto}
+  .vitem--row .pill--ok{display:none}
+  .vitem--row [data-role=edit],
+  .vitem--row [data-role=use]{display:none}
+}
 .vcheck{position:absolute; top:13px; right:13px; opacity:0; transition:opacity .14s}
 .vitem:hover .vcheck,.vitem.is-picked .vcheck,.vitem:focus-within .vcheck{opacity:1}
 .durpill.long{background:var(--warn-soft); color:var(--warn-ink)}
@@ -1284,7 +1344,7 @@ a.btn{text-decoration:none}
                 <span class="stepnum">1</span><h2>要合成的文本</h2>
                 <span class="card__act">
                   <button class="btn btn--outline btn--sm" id="c-sample" type="button"
-                          title="不知道写什么时，先塞一段带情绪的示例进来">填入示例</button>
+                          title="不知道写什么时，先塞一段能直接念的示例进来">填入示例</button>
                   <span class="pill" id="c-count">0 字</span>
                 </span>
               </div>
@@ -1542,7 +1602,10 @@ a.btn{text-decoration:none}
                        placeholder="按音色名筛选，打几个字就行（模糊匹配，Esc 清空）">
                 <div class="row-between mt">
                   <div class="row-between" id="l-filter"></div>
-                  <span class="hint" id="l-summary"></span>
+                  <div class="row-between">
+                    <span class="hint" id="l-summary"></span>
+                    <button class="btn btn--ghost btn--sm" id="l-view" type="button">紧凑列表</button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1868,7 +1931,7 @@ const STATE = {           // 各视图的即时状态
   design: { instruct: "" },
   official: { speaker: "vivian" },
   script: { roles: [] },
-  library: { picked: new Set(), mode: "all", q: "" },   // mode: all | xvec | icl；q: 按名字模糊筛
+  library: { picked: new Set(), mode: "all", q: "", view: "card" },   // mode: all | xvec | icl；q: 按名字模糊筛；view: card | row
   api: {},
 };
 
@@ -2503,11 +2566,7 @@ function paintResult(R, d) {
     // 前端停的是「等待」，不是后端的任务 —— 话要说准，别让人以为生成被中止了。
     // 上一次生成留下的播放器/参数必须一起收掉：否则卡片上是「已取消」+ 旧音频，
     // 看不出那段声音到底是哪一次的结果。
-    try { R.player.audio.pause(); } catch (_) {}
-    R.playerbox.classList.add("hidden");
-    R.metrics.classList.add("hidden");
-    R.params.classList.add("hidden");
-    R.acts.classList.add("hidden");
+    clearResult(R);
     R.idle.classList.remove("hidden");
     R.badge.dataset.state = "warn";
     R.badge.textContent = "已取消";
@@ -2765,6 +2824,30 @@ function stopMirror(R, keep = false) {
   if (R.player) R.player.stopMirror(keep);
 }
 
+/* 开始新任务前，把上一次留在结果区的东西全部收掉。
+   不收的话，上一轮的播放器 / 波形 / 参数表 / 下载按钮会和这一轮的进度条同时挂着 ——
+   分不清哪个属于这一次，而且旧音频可能还在响；更糟的是点了下载拿到的还是上一轮的。 */
+function clearResult(R, { keepIdle = true } = {}) {
+  if (!R) return;
+  stopMirror(R);
+  // 流式的声音在 Web Audio 那条通道上，<audio>.pause() 管不到它
+  if (R._pcmPlayer) {
+    R._pcmPlayer.stop();
+    R._pcmPlayer = null;
+  }
+  try { R.player.audio.pause(); } catch (_) { /* 还没加载过音频就算了 */ }
+  R.playerbox.classList.add("hidden");
+  // 下载链接也划掉。playerbox 虽然藏了，但留着一个指向上一轮文件的 href，
+  // 任何绕过界面的读法（快捷键、脚本、以后的自动化）拿到的都还是旧结果。
+  const dl = R.playerbox.querySelector("[data-role=dl]");
+  if (dl) dl.removeAttribute("href");
+  R.metrics.classList.add("hidden");
+  R.params.classList.add("hidden");
+  R.acts.classList.add("hidden");
+  R.alerts.innerHTML = "";
+  if (!keepIdle) R.idle.classList.add("hidden");
+}
+
 /* 让结果卡的播放器跟着 Web Audio 的真实位置走。
    为什么需要这个：结果卡一出现，它摆的是「0:00 / 5:00」——而声音是 Web Audio
    那条通道在放，耳朵里可能已经在第 2 分钟。进度条和声音对不上，用户会以为
@@ -2772,6 +2855,8 @@ function stopMirror(R, keep = false) {
 function syncMirror(R, player) {
   if (!R || !R.player || !player) return;
   stopMirror(R);
+  // 记一份：下次开新任务时要把它关掉，否则旧的流式声音会压在新任务的进度条底下继续响
+  R._pcmPlayer = player;
   if (player.finished()) return;   // 已经播完了，播放器就是普通状态，不用镜像
   const timer = setInterval(() => {
     if (player.finished()) { stopMirror(R, true); return; }   // 播完停在末尾
@@ -2791,14 +2876,13 @@ async function runJob(payload, R) {
     R.bar.classList.add("indet");       // 提交阶段没有真进度，走不确定态，别让条子干停在 0
     R.barfill.style.width = "";
     R.stage.textContent = "正在提交任务…";
-    // 上一次若是流式播到一半，这里必须把镜像收掉：新的一单会重新接管播放，
-    // 否则旧定时器还在改进度条，看起来像两条时间线在打架。
-    stopMirror(R);
+    // 结果区先清空：上一轮的播放器/参数/下载按钮不能和这一轮的进度条同屏，
+    // 何况上一轮的音频可能还在响。镜像的定时器也在这里一并收掉。
+    clearResult(R, { keepIdle: false });
     R.pct.textContent = "0%";
     R.msg.textContent = "";
     R.badge.dataset.state = "running";
     R.badge.textContent = "生成中…";
-    R.alerts.innerHTML = "";
     setGoText(R, "准备中…");
     if (R.cancel) {
       R.cancel.hidden = false;
@@ -3110,7 +3194,8 @@ function pickVoice({ title = "选择音色", hint = "", current = "" } = {}) {
       if (mode === "xvec") out = out.filter((v) => v.xvec_only);
       else if (mode === "icl") out = out.filter((v) => !v.xvec_only);
       if (q.trim()) out = out.filter((v) => fuzzyHit(v.name, q));
-      return out;
+      // 和音色库同一个排序：收藏的排前面，回车选中的第一条也因此是常用的那个
+      return sortVoices(out);
     };
 
     const paintModes = () => {
@@ -3139,7 +3224,8 @@ function pickVoice({ title = "选择音色", hint = "", current = "" } = {}) {
       m.$("#__pl").innerHTML = rows.length
         ? rows.map((v) => `<button type="button" class="vrow${v.name === current ? " is-on" : ""}"
               data-name="${esc(v.name)}">
-            <span class="vrow__n">${esc(v.name)}</span>
+            <span class="vrow__n">${v.starred
+              ? `<i class="vrow__star" title="已收藏，所以排在前面">★</i>` : ""}${esc(v.name)}</span>
             <span class="vrow__m">${fmtDur(v.duration)} · ${esc(modeText(v))}`
             + `${v.has_prompt ? " · 已有基因" : ""}</span>
             ${v.name === current ? `<span class="vrow__ck">当前</span>` : ""}
@@ -3728,7 +3814,12 @@ function initClone() {
   ta.addEventListener("input", sync);
   sync();                                    // 草稿回填后先把字数对上
   $("#c-sample").addEventListener("click", () => {
-    ta.value = "这句话我想说得压着点，别太用力。前面那件事已经过去了，现在只把结论说清楚。";
+    // 示例要能直接念出来。以前那句是「关于怎么说」的描述（"这句话我想说得压着点"），
+    // 读出来像在念旁白，听完还得自己改写一遍才算用上。
+    // 现在这段：性别中立、不绑题材、几句话里带着"犹豫 → 释然"的起伏，
+    // 既展示了气口和停顿，也够短（约 6 秒），试听不磨人。
+    ta.value = "其实这件事我也想了很久。刚开始总觉得难，后来慢慢才发现，"
+             + "难的往往不是事情本身，而是下决心那一刻。";
     sync();
   });
 
@@ -4105,10 +4196,19 @@ function initScript() {
     renderScriptHighlight();
   });
   $("#s-sample").addEventListener("click", () => {
-    ta.value = "[韩立][压低了声音] 此丹的药力，恐怕不止于此。\n"
-             + "[南宫婉] 你是说……服下之后会有异动？\n"
-             + "[韩立] 三日内必有反应。若三日无事，便是我想错了。\n"
-             + "[南宫婉][轻声] 那便等三日。";
+    // 角色名从音色库里取，不写死。写死成某个音色的话，用户一旦把它改名或删掉，
+    // 点一次示例就是满屏「没有这个音色」—— 比不给示例还糟。
+    // 取首尾两个：列表顺序和时长/质感无关，但首尾往往差得比较开，听起来像两个人在对话。
+    const names = VOICES.map((v) => v.name);
+    const a = names[0] || "旁白";
+    const b = names.length > 1 && names[names.length - 1] !== a ? names[names.length - 1]
+                                                              : (names[1] || a);
+    // 内容刻意选最日常的一段：不绑题材、不绑行业，谁都能直接听出像不像。
+    // 四行里带了疑问、陈述、关心、收尾，顺带演示 [轻声] 这种情绪指令怎么写。
+    ta.value = `[${a}] 你今天回来得挺晚，路上堵车了？\n`
+             + `[${b}] 嗯，地铁临时停运，等了快二十分钟。\n`
+             + `[${a}][轻声] 饭在锅里温着，先吃点东西吧。\n`
+             + `[${b}] 好。你也别等我，早点休息。`;
     updateScriptPreview();
   });
   $("#s-tidy").addEventListener("click", async () => {
@@ -4167,16 +4267,25 @@ function initScript() {
    ============================================================================ */
 function voiceCardHTML(v) {
   const picked = STATE.library.picked.has(v.name);
-  return `<div class="vitem${picked ? " is-picked" : ""}" data-name="${esc(v.name)}">
+  // 紧凑视图不另写一套模板：同一份 DOM 挂个类名，靠 CSS 改成横排。
+  // 另写一套的话，试听插槽、多选、四个操作按钮都得复制一遍，迟早对不上。
+  const row = STATE.library.view === "row";
+  return `<div class="vitem${picked ? " is-picked" : ""}${row ? " vitem--row" : ""}"
+       data-name="${esc(v.name)}">
     <input class="vcheck" type="checkbox" ${picked ? "checked" : ""}
            aria-label="选择 ${esc(v.name)}" data-role="pick">
     <div class="vitem__top">
+      <button class="vstar${v.starred ? " on" : ""}" data-role="star"
+              aria-pressed="${v.starred ? "true" : "false"}"
+              title="${v.starred ? "取消收藏" : "收藏，列表里置顶"}">★</button>
       <span class="vitem__name">${esc(v.name)}</span>
       <span class="sp"></span>
-      ${modePillHTML(v)}
-      <span class="pill durpill${v.length_hint === "偏长" ? " long" : ""}">${fmtDur(v.duration)}</span>
-      ${v.length_hint === "偏短" ? `<span class="pill pill--warn">偏短</span>` : ""}
-      ${v.has_prompt ? `<span class="pill pill--ok" title="已预生成加速缓存">基因</span>` : ""}
+      <span class="vitem__pills">
+        ${modePillHTML(v)}
+        <span class="pill durpill${v.length_hint === "偏长" ? " long" : ""}">${fmtDur(v.duration)}</span>
+        ${v.length_hint === "偏短" ? `<span class="pill pill--warn">偏短</span>` : ""}
+        ${v.has_prompt ? `<span class="pill pill--ok" title="已预生成加速缓存">基因</span>` : ""}
+      </span>
     </div>
     <p class="vitem__ref">${v.ref_text
       ? esc(v.ref_text)
@@ -4184,7 +4293,6 @@ function voiceCardHTML(v) {
     <div class="vitem__foot">
       <button class="btn btn--outline btn--sm" data-role="play">试听</button>
       <button class="btn btn--ghost btn--sm" data-role="edit">编辑</button>
-      <button class="btn btn--ghost btn--sm" data-role="text">参考文本</button>
       <button class="btn btn--ghost btn--sm" data-role="use">去克隆</button>
     </div>
     <div class="hrow__slot" data-role="slot"></div>
@@ -4208,6 +4316,20 @@ function renderLibraryFilter() {
     STATE.library.mode = b.dataset.mode;
     renderLibrary();
   }));
+
+  // 视图切换。用 onclick 覆盖赋值而不是 addEventListener：
+  // 这个函数每次渲染都会跑一遍，addEventListener 会把同一个回调叠成一串。
+  const vb = $("#l-view");
+  if (vb) {
+    const row = STATE.library.view === "row";
+    vb.textContent = row ? "卡片视图" : "紧凑列表";
+    vb.title = row ? "换回卡片视图" : "换成紧凑列表 —— 一屏能看下全部";
+    vb.onclick = () => {
+      STATE.library.view = row ? "card" : "row";
+      try { localStorage.setItem("qs-libview", STATE.library.view); } catch (_) {}
+      renderLibrary();
+    };
+  }
 }
 
 /* 模糊匹配：先按子串找，找不到再退一步按「顺序出现的字符」找。
@@ -4227,13 +4349,22 @@ function fuzzyHit(name, q) {
   return false;
 }
 
+/* 收藏置顶的唯一排序入口。
+   音色库列表和「选音色」弹窗共用这一份 —— 各写一份的话，同一个音色在库里排第一、
+   在弹窗里排第七，用户会以为两边看到的不是同一批数据。
+   不劈「收藏区」：收得少的时候那个分区是空的，反而更难看。 */
+function sortVoices(list) {
+  return list.slice().sort((a, b) => (b.starred ? 1 : 0) - (a.starred ? 1 : 0));
+}
+
 function visibleVoices() {
   const m = STATE.library.mode;
   let list = VOICES;
   if (m === "xvec") list = list.filter((v) => v.xvec_only);
   else if (m === "icl") list = list.filter((v) => !v.xvec_only);
   if (STATE.library.q.trim()) list = list.filter((v) => fuzzyHit(v.name, STATE.library.q));
-  return list;
+  // Array.sort 是稳定排序，同组内保持原有顺序
+  return sortVoices(list);
 }
 
 /* 概要行跟着筛选走：筛完只剩 2 个、右上角还写着「共 12 个音色」，
@@ -4307,12 +4438,29 @@ function renderLibrary() {
     renderLibraryRail();
     return;
   }
-  host.innerHTML = `<div class="vgrid">${list.map(voiceCardHTML).join("")}</div>`;
+  const rowMode = STATE.library.view === "row";
+  host.innerHTML = `<div class="vgrid${rowMode ? " vgrid--row" : ""}">${list.map(voiceCardHTML).join("")}</div>`;
 
   $$(".vitem", host).forEach((card) => {
     const name = card.dataset.name;
     const slot = $('[data-role=slot]', card);
     const pick = $('[data-role=pick]', card);
+    // 收藏：改完立刻重排（收藏的要马上置顶），所以整表重渲染，
+    // 不像勾选那样只改一张卡的 class。
+    $('[data-role=star]', card).addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const cur = VOICES.find((v) => v.name === name);
+      const on = !(cur && cur.starred);
+      try {
+        const r = await post(`/api/voices/${encodeURIComponent(name)}/star`, { starred: on });
+        BOOT.voices = r.voices || [];
+        syncVoiceCache();
+        renderLibrary();
+        toast(on ? "已收藏，下次排在前面" : "已取消收藏", "ok");
+      } catch (err) {
+        toast(err.message, "err");
+      }
+    });
     pick.addEventListener("change", () => {
       if (pick.checked) STATE.library.picked.add(name);
       else STATE.library.picked.delete(name);
@@ -4335,7 +4483,6 @@ function renderLibrary() {
       const v = VOICES.find((x) => x.name === name);
       if (v) openNewVoiceDialog({ preset: v });
     });
-    $('[data-role=text]', card).addEventListener("click", () => openRefText(name));
   });
   renderLibraryRail();
 }
@@ -4357,44 +4504,6 @@ async function retranscribeVoice(name) {
     await refreshVoices();
     toast(`参考文本已自动重转（${text.length} 字）—— 请核对`, "ok");
   } catch (e) { toast("参考文本重转失败：" + e.message, "err"); }
-}
-
-function openRefText(name) {
-  const v = VOICES.find((x) => x.name === name);
-  const m = openModal({
-    title: `参考文本 · ${name}`,
-    body: `<div class="field">
-        <div class="row-between">
-          <label for="__rt">这段参考音频里，逐字说的是什么</label>
-          <span id="rt-asr-slot"></span>
-        </div>
-        <textarea class="textarea" id="__rt" rows="4"
-          placeholder="逐字照抄，不要改写、不要补标点"></textarea>
-        <p class="hint">只有在关掉「只用说话人向量」（即完整 ICL 模式）时才必需。
-          写错会直接污染输出，不确定就保持说话人向量模式。</p>
-        <div class="notes mt" id="__rt-note" style="padding:0"></div>
-      </div>`,
-    foot: `<button class="btn btn--ghost" data-role="no">取消</button>
-           <button class="btn btn--ghost" data-role="clear">清空</button>
-           <button class="btn btn--primary" data-role="yes">保存</button>`,
-  });
-  const ta = m.$("#__rt");
-  // 预填充现有文本：早先这里写死成空串，编辑已有的参考文本等于每次都要重打一遍
-  ta.value = v?.ref_text || "";
-  mountTranscribe("#rt-asr-slot", (btn) =>
-    doTranscribe(btn, { voice: name }, ta, m.$("#__rt-note")));
-
-  m.$('[data-role=yes]').addEventListener("click", async () => {
-    try {
-      await post(`/api/voices/${encodeURIComponent(name)}/text`, { ref_text: ta.value.trim() });
-      m.close();
-      toast("参考文本已更新", "ok");
-      await refreshVoices();
-    } catch (e) { toast(e.message, "err"); }
-  });
-  m.$('[data-role=clear]').addEventListener("click", () => { ta.value = ""; ta.focus(); });
-  m.$('[data-role=no]').addEventListener("click", () => m.close());
-  ta.focus();
 }
 
 function renderLibraryRail() {
@@ -5187,6 +5296,8 @@ function applyModelStatus(status) {
   BOOT.model_status = status || {};
   paintTopbar();
   paintSettings();
+  // 从设置页手动点了「预加载」时也要开始盯：那也是一次后台加载
+  watchPreload();
 }
 
 function bindSettings() {
@@ -5244,6 +5355,21 @@ function bindSettings() {
 /* 拉一次 /api/model，把 BOOT.model_status（和缺失权重）更新到最新。
    顶部状态带、系统设置页都靠它 —— BOOT 里那份是页面打开时的快照，
    生成过之后必然过期。永远不 reject：拉不到就沿用上次那份，别挡住页面。 */
+/* 预加载是在后台跑的：页面打开时多半还没加载完，顶栏于是显示「加载中 1.7B…」，
+   而模型三十秒后就绪了 —— 以前没人去问，界面就一直停在加载中，直到用户点一次
+   生成或进系统设置才「忽然好了」。这里补一段轻量轮询：只在 `loading` 有值的时候转，
+   加载结束（不管成败）立刻停，平时一个请求都不发。 */
+let MODEL_POLL = 0;
+function watchPreload() {
+  const loading = !!(BOOT.model_status || {}).loading;
+  if (loading && !MODEL_POLL) {
+    MODEL_POLL = setInterval(refreshModelStatus, 2000);
+  } else if (!loading && MODEL_POLL) {
+    clearInterval(MODEL_POLL);
+    MODEL_POLL = 0;
+  }
+}
+
 async function refreshModelStatus() {
   try {
     const r = await api("/api/model");
@@ -5256,6 +5382,8 @@ async function refreshModelStatus() {
   paintTopbar();
   // 系统设置页正在看着的时候（比如在别处生了成再切回来），卡片也要跟着对
   if (SETTINGS_READY && !$("#view-settings").classList.contains("hidden")) paintSettings();
+  // 每次刷完都判断一次：还在加载就继续盯，好了就停掉定时器
+  watchPreload();
 }
 
 async function renderSettings() {
@@ -5384,6 +5512,12 @@ async function boot() {
     return;
   }
   syncVoiceCache();
+  // 首屏那份状态是刚拍的，但如果是「预加载正在进行中」，就得开始盯着它
+  watchPreload();
+  // 音色库的视图偏好跨会话记住：嫌长的人不想每次都点一遍
+  try {
+    if (localStorage.getItem("qs-libview") === "row") STATE.library.view = "row";
+  } catch (_) { /* 隐私模式下拿不到，用默认卡片视图 */ }
   $("#brand-sub").textContent = `Studio · ${BOOT.hardware?.is_gpu ? "GPU" : "CPU"}`;
 
   $$("#nav .navitem").forEach((b) => b.addEventListener("click", () => {

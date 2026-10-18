@@ -379,6 +379,17 @@ async def api_voice_text(name: str, payload: dict):
         return _err(str(e))
 
 
+@app.post("/api/voices/{name}/star")
+async def api_voice_star(name: str, payload: dict):
+    """收藏 / 取消收藏。只影响列表置顶，不参与合成。"""
+    try:
+        if not voices_mod.set_starred(_safe(name), bool((payload or {}).get("starred"))):
+            return _err("音色不存在。", 404)
+        return _ok(voices=voices_mod.rows())
+    except Exception as e:  # noqa: BLE001
+        return _err(str(e))
+
+
 @app.post("/api/voices/{name}/prompt")
 async def api_voice_prompt(name: str, payload: dict | None = None):
     """生成音色基因（.pt）。需要加载模型，耗时较长，因此走后台线程 + 轮询。"""

@@ -296,6 +296,9 @@ def rows() -> list[dict]:
             "chars": len(ref),
             "ref_text": ref,
             "has_prompt": path_of(n, BIO_EXT).exists(),
+            # 收藏只影响列表排序（置顶），不参与任何合成逻辑 —— 所以放在元数据里就够了，
+            # 不值得为它动音频或基因文件。
+            "starred": bool(_read_meta(n).get("starred", False)),
             # 音频文件的修改时间（秒）。前端拿它当 URL 的版本号：
             # 同一个音色名换了音频，URL 一变浏览器就会重新取，不会拿着旧的放。
             # 只靠 Cache-Control 不够 —— 老客户端、直接贴链接、反向代理都可能自己缓存。
@@ -591,3 +594,18 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def set_starred(name: str, on: bool) -> bool:
+    """收藏 / 取消收藏一个音色。不存在返回 False。
+
+    只动元数据里的一个布尔值，不碰音频、参考文本和基因文件 ——
+    收藏是「我找它方便」，不是音色的属性。
+    """
+    n = sanitize_name(name)
+    if not n or not path_of(n, WAV_EXT).exists():
+        return False
+    meta = _read_meta(n)
+    meta["starred"] = bool(on)
+    _write_meta(n, meta)
+    return True

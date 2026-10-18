@@ -99,7 +99,9 @@ function check(name, ok, detail = "", soft = false) {
   await page.waitForFunction(() => {
     const b = document.querySelector("#o-result [data-role=badge]")?.textContent || "";
     return b.includes("已完成") || b.includes("失败");
-  }, { timeout: 180000 }).catch(() => {});
+  }, null, { timeout: 180000 }).catch(() => {});
+  // waitForFunction 的签名是 (fn, arg, options)：超时放第二个会被当成 arg，
+  // 实际仍用默认 30 秒 —— 长文本那一单就会被误判成「没跑完」。
   // 等这一单的声音放完，避免和下一单的排程混在一起
   await page.waitForFunction(
     () => {
@@ -107,7 +109,7 @@ function check(name, ok, detail = "", soft = false) {
       const a = r?.querySelector("audio");
       return !a || (a.paused && !a.disabled);
     },
-    { timeout: 30000 }).catch(() => {});
+    null, { timeout: 30000 }).catch(() => {});
   await page.waitForTimeout(500);
   // 预热那一单用的是另一个 AudioContext（它自己的时间轴从 0 开始）。
   // 探针是全局数组，不清空就会把两套时间轴混在一起比，比出假的「重叠」。
