@@ -413,6 +413,24 @@ input[type=checkbox]{width:15px; height:15px; accent-color:var(--accent); cursor
 .switchrow__t b{display:block; font-size:var(--fs-sm); font-weight:600}
 .switchrow__t span{display:block; font-size:var(--fs-xs); color:var(--text-3); margin-top:2px; line-height:1.6}
 
+/* 输出后处理：每项一个勾 + 一句说明上下叠。说明里的数字框要能塞进一行文字，
+   所以单独把高度压到 28px —— 用默认 40px 的 .input 会把行距撑开、读起来断成两截。 */
+.pplist{display:flex; flex-direction:column; gap:var(--s-3)}
+.ppitem{display:flex; flex-direction:column; gap:3px}
+.ppitem > .hint{padding-left:23px}      /* 与勾选框的宽度 + gap 对齐，说明挂在标题下面 */
+.ppnum{
+  display:inline-block; width:62px; height:26px; padding:0 6px;
+  text-align:center; font-size:var(--fs-sm); line-height:1;
+  /* input 不继承字体，不写这行就用系统默认的 Arial 渲染数字 ——
+     混在中文说明里会比周围大一号，基线也对不齐 */
+  font-family:inherit;
+  font-variant-numeric:tabular-nums;
+}
+/* 数字框那一行改用 flex 对齐：inline 元素 + 28px 高的输入框，
+   无论怎么调 vertical-align 都会和 13px 的中文差半个像素左右；
+   flex 的 align-items:center 是按盒子中线对，一次对齐到底。 */
+.ppnumrow{display:flex; align-items:center; flex-wrap:wrap; gap:2px 6px}
+
 /* ============================ 按钮 ============================ */
 .btn{
   display:inline-flex; align-items:center; justify-content:center; gap:var(--s-2);
@@ -2471,6 +2489,13 @@ function paramPairs(p) {
   if (p.mode === "clone" && p.xvec_only != null)
     put("克隆方式", p.xvec_only ? "仅说话人向量" : "完整 ICL（含参考韵律）");
   if (p.mode === "script") put("段间静音", (p.gap_secs ?? BOOT.defaults?.gap_secs ?? 0.4) + " s");
+  // 只在 payload 真带了这几项时才显示 —— 老记录、脚本直调可能压根没传，
+  // 那时按「关闭」写出来是瞎猜（后端缺省是全开）。
+  if (p.pp_silence != null || p.pp_normalize != null || p.pp_fade != null) {
+    const on = [p.pp_silence && "去静音", p.pp_normalize && "归一化", p.pp_fade && "淡入淡出"]
+      .filter(Boolean);
+    put("后处理", on.length === 3 ? "全开" : (on.length ? on.join(" · ") : "关闭"));
+  }
   return out;
 }
 
@@ -2478,6 +2503,10 @@ function paramPairs(p) {
 function paramsHTML(p, info) {
   const pairs = paramPairs(p || {});
   if (!pairs.length) return "";
+  // 「后处理效果」排在后处理开关的下一行：一个是设置，一个是这次真的动了多少 ——
+  // 只有后者能解释「这条为什么比上次短」。
+  const eff = ppEffectText(info && info.postprocess);
+  if (eff) pairs.push(["后处理效果", eff]);
   if (info && info.took != null) pairs.push(["生成耗时", info.took.toFixed(1) + " s"]);
   return `<div class="pmeta__t">本次参数</div><div class="pmeta pmeta--rows">`
     + pairs.map(([k, v]) => `<i>${esc(k)}</i><b>${esc(v)}</b>`).join("") + `</div>`;
@@ -2592,7 +2621,7 @@ function paintResult(R, d) {
   R.metrics.innerHTML = m.map(([k, v]) => `<span class="metric">${esc(k)}<b>${esc(v)}</b></span>`).join("");
   R.metrics.classList.toggle("hidden", !m.length);
 
-  const ph = paramsHTML(d.params, { took: d.took });
+  const ph = paramsHTML(d.params, { took: d.took, postprocess: d.postprocess });
   R.params.innerHTML = ph;
   R.params.classList.toggle("hidden", !ph);
   R.params.classList.toggle("is-first", !d.url);
@@ -2920,6 +2949,9 @@ async function runJob(payload, R) {
       if (R) paintResult(R, {
         url: res.url, file: res.file, duration: res.duration, level: res.level,
         message: res.status, params: payload, took: res.took,
+        // 流式那一单不会做后处理，后端会在 done 里带 skipped 标记 —— 传下去，
+        // 参数表才会写「已跳过」而不是让用户以为剪过静音
+        postprocess: res.postprocess,
       });
       // 播放器刚拿到的是「0:00 / 5:00」，但声音还在 Web Audio 队列里放到一半。
       // 让它跟着真实位置走，播完再归位 —— 一屏之内只该有一条时间线。
@@ -2970,6 +3002,7 @@ async function runJob(payload, R) {
       message: st.message, params: payload,
       // 用服务端报的合成耗时（和合成记录里那个数一致）；老服务端没这个字段时退回前端掐的
       took: res.took ?? (Date.now() - t0) / 1000,
+      postprocess: res.postprocess,
     });
 
     // 手机上结果卡在长表单底下（要滑过两屏），生成完了得把视线自己带过去。
@@ -3018,6 +3051,85 @@ function saveGenDefaults(patch) {
   Object.assign(GEN_DEFAULTS, patch);
   try { localStorage.setItem(GEN_DEFAULTS_KEY, JSON.stringify(GEN_DEFAULTS)); } catch (e) { /* 隐私模式下存不了，本页内仍然生效 */ }
   paintRailDefaults();
+}
+
+/* ---------------------------------------------------------------------------
+   输出后处理（去静音 / 音量归一化 / 淡入淡出）
+   四个生成页共用同一份设置 —— 它描述的是「这个工具怎么整理产物」，不是某一
+   种模式的做法，所以不做成每页各一套（那只会让人以为换了页面就换了规则）。
+   默认值来自 /api/bootstrap 的 defaults.postprocess，前端不自己另写一份。
+   改了就存在浏览器本地；每次提交随 payload 送上去，合成记录里存的是实际值。
+--------------------------------------------------------------------------- */
+const PP_KEY = "qs.pp";
+// 用户在本地改过哪些键。boot() 拿到服务端默认值后只回填「没改过」的那几项 ——
+// 否则每次刷新都会把用户的设置按默认值重置一遍。
+const PP_SAVED = new Set();
+const PP_STATE = (() => {
+  const d = BOOT.defaults?.postprocess || {};
+  const pick = (v, fb) => (typeof v === "boolean" ? v : fb);
+  let raw = {};
+  try { raw = JSON.parse(localStorage.getItem(PP_KEY) || "{}") || {}; } catch (e) { raw = {}; }
+  Object.keys(raw).forEach((k) => PP_SAVED.add(k));
+  const mid = Number(raw.mid_ms);
+  return {
+    silence: pick(raw.silence, d.silence !== false),
+    normalize: pick(raw.normalize, d.normalize !== false),
+    fade: pick(raw.fade, d.fade !== false),
+    mid_ms: (Number.isFinite(mid) && mid > 0)
+      ? Math.min(3000, Math.max(100, Math.round(mid)))
+      : (Number(d.mid_ms) || 500),
+  };
+})();
+
+function savePP(patch) {
+  Object.assign(PP_STATE, patch);
+  Object.keys(patch).forEach((k) => PP_SAVED.add(k));
+  try { localStorage.setItem(PP_KEY, JSON.stringify(PP_STATE)); } catch (e) { /* 隐私模式下存不了，本次仍然生效 */ }
+}
+
+/* 服务端回来的默认值填到「用户没动过」的项上。
+   默认值的唯一来源是 app/postproc.py（经 /api/bootstrap 下发），
+   这里只是把它落到还没被本地设置覆盖的开关上。 */
+function syncPPDefaults() {
+  const d = BOOT.defaults?.postprocess || {};
+  if (!d || typeof d !== "object" || !Object.keys(d).length) return;
+  if (!PP_SAVED.has("silence")) PP_STATE.silence = d.silence !== false;
+  if (!PP_SAVED.has("normalize")) PP_STATE.normalize = d.normalize !== false;
+  if (!PP_SAVED.has("fade")) PP_STATE.fade = d.fade !== false;
+  if (!PP_SAVED.has("mid_ms") && Number(d.mid_ms) > 0) PP_STATE.mid_ms = Number(d.mid_ms);
+  paintPPUI();
+}
+
+/* 塞进每次生成的 payload。
+   全关时也必须把四个 false 一起发出去 —— 后端只认「显式传了 false」，
+   不发就会按默认全开处理，用户明明关了却拿到处理过的音频。 */
+function ppPayload() {
+  return {
+    pp_silence: !!PP_STATE.silence,
+    pp_normalize: !!PP_STATE.normalize,
+    pp_fade: !!PP_STATE.fade,
+    pp_mid_ms: PP_STATE.mid_ms,
+  };
+}
+
+/* 「实际动了多少」—— 与后端 postprocess.summary() 同一套口径，
+   但这里要说给人听（剪掉 1.2 秒 / 响度 +3.2 dB），所以不复用那串字符串。 */
+function ppEffectText(pp) {
+  if (!pp) return "";
+  if (pp.skipped === "stream") return "边生成边播，已跳过";
+  // 全关时不返回任何东西：参数表上一行已经写着「后处理 关闭」，
+  // 再来一行「未生效」是同一件事说两遍。
+  if (!pp.applied) return "";
+  const bits = [];
+  if (pp.silence) {
+    bits.push(pp.cut_secs > 0.05 ? `剪掉 ${Number(pp.cut_secs).toFixed(1)} 秒静音` : "静音已紧凑");
+  }
+  if (pp.normalize) {
+    const g = Number(pp.gain_db) || 0;
+    bits.push(Math.abs(g) >= 0.15 ? `响度 ${g > 0 ? "+" : ""}${g.toFixed(1)} dB` : "响度已达标");
+  }
+  if (pp.fade) bits.push("首尾渐变");
+  return bits.join(" · ") || "无变化";
 }
 
 function genLang() {
@@ -3133,7 +3245,8 @@ function renderAdv(prefix, notes = []) {
   // 「模型管理」不在这里了：它是**全局**的（同一时刻只驻留一套权重），
   // 四个生成页各挂一份既重复，状态又只在点按钮时才更新 —— 现在统一收到
   // 「系统设置」页（#view-settings），进来就拉一次 /api/model。
-  $(`#${prefix}-adv`).innerHTML = `
+  const adv = $(`#${prefix}-adv`);
+  adv.innerHTML = `
     <details class="acc" open>
       <summary>分段与上限<span class="acc__note">长文本怎么被切开</span></summary>
       <div class="acc__body">
@@ -3144,7 +3257,62 @@ function renderAdv(prefix, notes = []) {
         </table>
         ${notes.map((n) => noteHTML(n, "info")).join("")}
       </div>
+    </details>
+    <details class="acc">
+      <summary>输出后处理<span class="acc__note">去静音 · 归一化 · 淡入淡出</span></summary>
+      <div class="acc__body">
+        <p class="hint" style="margin:0 0 var(--s-3)">
+          合成完、写盘前统一整理一遍。默认三项全开；全关掉拿到的就是模型原样。
+          <b>「边生成边播」时不生效</b> —— 那种模式下音频是边生成边播出去的，
+          事后处理会让下载到的和刚听到的不是同一条。
+        </p>
+        <div class="pplist">
+          <div class="ppitem">
+            <label class="check"><input type="checkbox" data-pp="silence">去长静音</label>
+            <span class="hint ppnumrow"><span>句中停顿超过</span>
+              <input class="input ppnum" type="number" data-pp="mid_ms"
+                     min="100" max="3000" step="50" inputmode="numeric"
+                     aria-label="长停顿阈值（毫秒）"><span>毫秒就压到 0.5 秒；首尾各留 0.1 秒</span></span>
+          </div>
+          <div class="ppitem">
+            <label class="check"><input type="checkbox" data-pp="normalize">音量归一化</label>
+            <span class="hint">有声部分统一到 −20 dBFS，峰值超了就压住 —— 多角色剧本的响度才齐</span>
+          </div>
+          <div class="ppitem">
+            <label class="check"><input type="checkbox" data-pp="fade">淡入淡出</label>
+            <span class="hint">首尾各 0.1 秒渐变 + 留白，去掉起播那一下「咔」</span>
+          </div>
+        </div>
+      </div>
     </details>`;
+
+  // 事件委托挂在容器上：renderAdv 每页只跑一次，逐项 addEventListener 以后
+  // 一改结构就容易漏挂。change 对数字框是「失焦/回车」触发，正合适 ——
+  // 不用 input 事件，否则边打字边存半截数字。
+  adv.addEventListener("change", (e) => {
+    const el = e.target.closest("[data-pp]");
+    if (!el) return;
+    const k = el.dataset.pp;
+    if (k === "mid_ms") {
+      const n = parseInt(el.value, 10);
+      const v = Math.min(3000, Math.max(100, Number.isFinite(n) ? n : 500));
+      el.value = v;                 // 越界手输要当场纠正，否则框里留着一个非法值
+      savePP({ mid_ms: v });
+    } else {
+      savePP({ [k]: el.checked });
+    }
+  });
+  paintPPUI();
+}
+
+/* 把所有 [data-pp] 控件刷成 PP_STATE。
+   boot() 拿到服务端默认值之后还要再调一次 —— 那时控件已经渲染出来了。 */
+function paintPPUI() {
+  $$("[data-pp]").forEach((el) => {
+    const k = el.dataset.pp;
+    if (k === "mid_ms") el.value = PP_STATE.mid_ms;
+    else el.checked = !!PP_STATE[k];
+  });
 }
 
 const RAILS = {};
@@ -3846,6 +4014,7 @@ function initClone() {
       mode: "clone", text, language: RAILS.c.lang(), size: RAILS.c.size(),
       instruct: inst.value.trim(),
       xvec_only: $("#c-xvec").checked,
+      ...ppPayload(),
     };
     if (STATE.clone.src === "lib") {
       if (!STATE.clone.voice) { toast("先选一个音色", "warn"); return; }
@@ -3888,6 +4057,7 @@ function initDesign() {
     await runJob({
       mode: "design", text, instruct: desc, size: "1.7B",
       language: RAILS.d.lang(),
+      ...ppPayload(),
     }, RAILS.d.R);
     btn.disabled = false;
   });
@@ -4053,6 +4223,7 @@ function initOfficial() {
     const payload = {
       mode: "official", text, language: RAILS.o.lang(), size: RAILS.o.size(),
       speaker: STATE.official.speaker, instruct: inst.value.trim(),
+      ...ppPayload(),
     };
     const eff = RAILS.o.size() === "auto" ? (BOOT.hardware?.default_size || "1.7B") : RAILS.o.size();
     if (eff === "0.6B" && /^\s*\[/m.test(text)) {
@@ -4255,6 +4426,7 @@ function initScript() {
     btn.disabled = true;
     await runJob({
       mode: "script", text, language: RAILS.s.lang(), size: RAILS.s.size(),
+      ...ppPayload(),
     }, RAILS.s.R);
     btn.disabled = false;
   });
@@ -4957,6 +5129,17 @@ function histMetaHTML(it) {
     out.push(`克隆方式 ${it.xvec_only ? "仅说话人向量" : "完整 ICL（含参考韵律）"}`);
   }
   if (it.mode === "script" && it.gap_secs != null) out.push(`段间静音 ${it.gap_secs} s`);
+  // 后处理：记录里存的是「实际动了多少」，不是开关。想回看「这条为什么比上次短」
+  // 只能看这一项 —— 老记录没有这个字段，那就什么都不写。
+  const pp = it.postprocess;
+  if (pp && typeof pp === "object") {
+    if (pp.skipped === "stream") out.push("后处理 流式跳过");
+    else if (!pp.applied) out.push("后处理 关闭");
+    else {
+      const eff = ppEffectText(pp);
+      if (eff) out.push(`后处理 ${eff}`);
+    }
+  }
   out.push(it.duration ? `音频 ${fmtDur(it.duration)}` : "音频 —");
   out.push(`${it.chars || 0} 字`);
   if (it.took) out.push(`耗时 ${it.took.toFixed(1)} s`);
@@ -5556,6 +5739,8 @@ async function boot() {
     initOfficial();
     initScript();
     initLibrary();
+    // 后处理控件是 init*() 里渲染的，服务端默认值必须等它们都在了再回填
+    syncPPDefaults();
     renderEnv();
     $("#c-max").textContent = String(BOOT.limits?.max_text_chars ?? 2000);
     // 顶栏：语种/规格是"就地改全局默认值"，改完立刻写本地并存回系统设置页

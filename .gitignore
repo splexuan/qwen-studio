@@ -53,5 +53,9 @@ desktop.ini
 
 # 基准/验证脚本的产物目录（tools/bench_stream.py 等会往里写 wav 和 json）
 tools/_bench/
+# 有声书那类一次性任务的工作目录：脚本是临时写的，里面的正文还是个人创作内容，
+# 不该进公开仓库（tools/_ 前缀就是「不是长期工具」的意思）
+tools/_book/
+tools/_*/
 # WorkBuddy 自己的会话数据（不是项目内容）
 .workbuddy-ai/

@@ -77,6 +77,10 @@ def add(entry: dict) -> dict:
         "took": round(float(entry.get("took") or 0), 2),
         "xvec_only": entry.get("xvec_only"),
         "gap_secs": entry.get("gap_secs"),
+        # 后处理统计（剪掉多少静音 / 实际增益 / 是不是流式跳过了）。
+        # 没有它，「这条为什么比上次短 1.2 秒」事后根本查不出来 ——
+        # 参数区显示的是「开没开」，这里记的是「实际动了多少」，不是一回事。
+        "postprocess": entry.get("postprocess"),
         "status": entry.get("status", "ok"),
     }
     with _LOCK:

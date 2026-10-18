@@ -15,7 +15,7 @@ from __future__ import annotations
 ENDPOINTS: list[dict] = [
     {
         "method": "GET", "path": "/api/bootstrap", "group": "首屏",
-        "desc": "一次拿全首屏所需：硬件档位、语种、规格、官方说话人、音色列表、模型就位情况、ASR 可用性、各项上限与默认值。",
+        "desc": "一次拿全首屏所需：硬件档位、语种、规格、官方说话人、音色列表、模型就位情况、ASR 可用性、各项上限与默认值（含输出后处理的默认开关与阈值 defaults.postprocess）。",
         "params": [],
     },
     {
@@ -129,6 +129,13 @@ ENDPOINTS: list[dict] = [
             ("ref_text", "str?", "参考音频文本；xvec_only=false 时必填"),
             ("xvec_only", "bool?", "仅用说话人向量；false 走完整 ICL，更贴参考韵律"),
             ("speaker", "str?", "mode=official 时的官方说话人 key"),
+            ("postprocess", "bool?", "false = 整组后处理（去静音/归一化/淡入淡出）全关，默认 true"),
+            ("pp_silence", "bool?", "去长静音：句中长停顿压短、首尾裁边，默认 true"),
+            ("pp_normalize", "bool?", "音量归一化到 -20 dBFS（有声部分），默认 true"),
+            ("pp_fade", "bool?", "首尾淡入淡出 + 各 0.1s 留白，默认 true"),
+            ("pp_mid_ms", "int?", "句中停顿超过多少毫秒才压，默认 500"),
+            ("pp_edge_ms", "int?", "首尾各保留多少毫秒静音，默认 100"),
+            ("pp_target_db", "float?", "归一化目标响度，默认 -20（范围 -40 ~ -6）"),
         ],
     },
     {
@@ -162,6 +169,9 @@ ENDPOINTS: list[dict] = [
             "pcm 的 data 是 base64 的 float32 小端裸采样，采样率见 meta.sr。"
             "不支持流式的组合（剧本、声音设计、多人对话）返回 409 且 fallback=true，"
             "调用方应改走 /api/jobs。收尾会和普通任务一样落盘并记一条合成记录。"
+            "**注意：流式不做输出后处理** —— 音频块生成的同时就已经播出去了，"
+            "收尾再剪静音会让「下载到的」和「刚听到的」不是同一条；done 事件里 "
+            "postprocess.skipped=\"stream\" 就是这个标记。要后处理后的版本请走 /api/jobs。"
         ),
         "params": [
             ("mode", "str", "clone | official（其余模式不支持）"),

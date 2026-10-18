@@ -64,6 +64,7 @@ import config as cfg  # noqa: E402
 import core  # noqa: E402  —— 生成核心（import 不会加载模型）
 import fetch as fetch_mod  # noqa: E402  —— 从链接拉参考音频
 import history as history_mod  # noqa: E402
+import postproc  # noqa: E402  —— 输出后处理（纯 numpy，不加载模型）
 import script as script_mod  # noqa: E402
 import voices as voices_mod  # noqa: E402
 
@@ -181,6 +182,9 @@ def api_bootstrap():
         "defaults": {
             "xvec_only": cfg.CLONE_XVEC_ONLY,
             "gap_secs": cfg.SCRIPT_GAP_SECS,
+            # 输出后处理的默认开关与阈值 —— 界面据此画那一组勾选，
+            # 前端不再自己写一遍默认值（两边各写一份迟早会分叉）
+            "postprocess": postproc.defaults(),
         },
         "model_status": core.model_status(),
     }
@@ -514,7 +518,7 @@ def _run_job(jid: str, kind: str, p: dict) -> None:
                  message="正在准备模型 —— 首次使用该规格要加载权重并预热 CUDA graph，"
                          "通常十几到几十秒。")
         t_synth = time.time()
-        wav, sr, status, level = core.synthesize(p)
+        wav, sr, status, level, pp_stats = core.synthesize(p)
         # 生成耗时：合成记录和结果卡显示的是同一个数（之前记录里根本没有这项，
         # 结果卡的耗时是前端掐的，两边对不上）
         took = round(time.time() - t_synth, 2)
@@ -529,7 +533,10 @@ def _run_job(jid: str, kind: str, p: dict) -> None:
         fname = core.save_wav(wav, sr, tag)
         dur = round(len(wav) / sr, 2) if sr else 0.0
         head = status.splitlines()[0] if status else ""
-        history_mod.add({**p, "status": level, "file": fname, "duration": dur, "took": took})
+        # 后处理统计跟着记录一起存：事后回看「这条为什么比上次短 1 秒」
+        # 只能靠它，结果卡上那行小字是不会留在记录里的。
+        history_mod.add({**p, "status": level, "file": fname, "duration": dur,
+                         "took": took, "postprocess": pp_stats})
 
         _job_set(
             jid, state="done", progress=1.0,
@@ -539,6 +546,7 @@ def _run_job(jid: str, kind: str, p: dict) -> None:
                 "duration": dur, "level": level,
                 "took": took,            # 与合成记录同一个数
                 "headline": head,
+                "postprocess": pp_stats,
             },
         )
     except Exception as e:  # noqa: BLE001
@@ -671,14 +679,20 @@ async def api_tts_stream(payload: dict):
                         payload.get("mode", "clone"), "audio")
                     fname = core.save_wav(wav, sr, tag)
                     status = core.status_line(wav, sr, took or 0.0)
+                    # 流式不做后处理（音频已经边生成边播出去了），
+                    # 但记录里必须留痕 —— 否则回看时看到「后处理开着」却拿到未处理的音频，
+                    # 会以为功能坏了。skipped 这个标记就是给这件事用的。
+                    skipped = {"applied": False, "skipped": "stream"}
                     history_mod.add({**payload, "status": "ok", "file": fname,
-                                     "duration": dur, "took": took})
+                                     "duration": dur, "took": took,
+                                     "postprocess": skipped})
                     yield _sse("done", {
                         "file": fname, "url": f"/media/out/{fname}",
                         "duration": dur, "took": took, "level": "ok",
                         "status": status,
                         "headline": status.splitlines()[0] if status else "",
                         "pieces": pl.get("pieces"),
+                        "postprocess": skipped,
                     })
                     return
         finally:

@@ -29,6 +29,7 @@ import soundfile as sf
 import torch
 
 import config as cfg
+import postproc
 import voices as voices_mod
 
 # ---------------------------------------------------------------------------
@@ -555,10 +556,11 @@ def build_speaker_preview(key: str, size: str) -> Path:
 # ---------------------------------------------------------------------------
 # 统一入口（server.py 只调这个）
 # ---------------------------------------------------------------------------
-def synthesize(p: dict) -> tuple[np.ndarray, int, str, str]:
+def synthesize(p: dict) -> tuple[np.ndarray, int, str, str, dict]:
     """按参数生成一段音频。
 
-    返回 ``(waveform, sample_rate, status, level)``；``level`` ∈ ok/warn/error。
+    返回 ``(waveform, sample_rate, status, level, pp_stats)``；``level`` ∈ ok/warn/error，
+    ``pp_stats`` 是后处理的统计（关掉时 ``{"applied": False}``），供合成记录与结果卡用。
     ``p`` 的字段：
         mode        clone | design | official | script
         text        文本
@@ -571,6 +573,7 @@ def synthesize(p: dict) -> tuple[np.ndarray, int, str, str]:
         speaker     官方说话人（mode=official）
         xvec_only   是否只用说话人向量（仅 mode=clone 有效）
         gap_secs    段间静音（仅 script / 多人对话）
+        pp_*        输出后处理开关，见 app/postproc.py
     """
     mode = (p.get("mode") or "clone").strip().lower()
     text = (p.get("text") or "").strip()
@@ -624,14 +627,27 @@ def synthesize(p: dict) -> tuple[np.ndarray, int, str, str]:
                     level = "warn"
                     extra = (extra or "") + "\n已释放显存后重试成功。"
                 except Exception as e2:  # noqa: BLE001
-                    return np.zeros(1, dtype=np.float32), 24000, _friendly_error(e2), "error"
+                    return (np.zeros(1, dtype=np.float32), 24000,
+                            _friendly_error(e2), "error", {"applied": False})
             else:
-                return np.zeros(1, dtype=np.float32), 24000, _friendly_error(e), "error"
+                return (np.zeros(1, dtype=np.float32), 24000,
+                        _friendly_error(e), "error", {"applied": False})
         else:
             level = "ok"
 
+    # 后处理放在锁**外**：纯 CPU、几毫秒，没必要占着 GPU 锁 ——
+    # 那几十毫秒里另一路生成本来可以开始加载权重了。
+    pp_stats: dict = {"applied": False}
+    if level != "error" and len(wav) > 1:
+        wav, pp_stats = postproc.apply(wav, sr, postproc.options(p))
+        note = postproc.summary(pp_stats)
+        # 只报「动了什么」，不报设置 —— 设置已经在结果卡参数表里了。
+        # 这一行的价值在于：事后看到「剪掉 1.2s」能解释「为什么这条比上次短」。
+        if pp_stats.get("applied") and note:
+            extra = "\n".join(x for x in (extra, f"后处理：{note}") if x)
+
     status = _status_line(wav, sr, time.time() - t0, extra)
-    return wav, sr, status, level
+    return wav, sr, status, level, pp_stats
 
 
 def _resolve_clone_source(p: dict) -> tuple[str, str, bool, Any]:
@@ -811,7 +827,11 @@ def synthesize_stream(p: dict):
             return
 
         yield ("done", {"took": round(time.time() - t0, 2),
-                        "pieces": len(pieces), "status": ""})
+                        "pieces": len(pieces), "status": "",
+                        # 流式**不做**后处理：音频块在生成的同时就已经播出去了，
+                        # 收尾再剪静音/归一化只会让「下载到的」和「刚听到的」不一样。
+                        # 想听后处理后的版本，用普通生成（参数不用改）。
+                        "postprocess": False})
 
 
 def warmup(kind: str = "clone", size: str = "") -> float:
