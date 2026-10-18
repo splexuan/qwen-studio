@@ -342,7 +342,7 @@ def _reserve(tag: str) -> Path:
     两个线程同时抢同一个名字，只有一个能拿到，另一个拿到 FileExistsError 换下一个。
     原来是「先 while path.exists() 选名字、再 sf.write」，那是典型的查-写竞态：
     两边都可能查到同一个「不存在」的名字，后写的那份把先写的盖掉。
-    以前碰不到是因为写盘几乎总在 GPU 锁后面排队；多份候选把这条路径打开了。
+    现在写盘虽然基本还在 GPU 锁后面排队，但这个竞态本身不该靠「碰不到」来成立。
     """
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     base = f"{tag}_{stamp}"
@@ -373,39 +373,6 @@ def save_wav(wav: np.ndarray, sr: int, tag: str) -> str:
                 pass
         raise
     return path.name
-
-
-def promote_wav(src: str | Path, tag: str) -> str:
-    """把一份候选音频搬进 outputs/，返回正式文件名。
-
-    「选中一份」= 改名进正式目录、其余几份随候选目录一起删掉 ——
-    所以这里必须用 os.replace 而不是 copy：原地改名不占第二份磁盘，
-    也顺带保证候选目录删得干净。
-    """
-    path = _reserve(tag)
-    try:
-        os.replace(str(src), str(path))
-    except Exception:
-        try:
-            path.unlink()
-        except OSError:
-            pass
-        raise
-    return path.name
-
-
-def save_candidate(wav: np.ndarray, sr: int, index: int, folder: str | Path) -> str:
-    """把一份候选写进临时目录，返回文件名。
-
-    候选**不进 outputs/**：一次 n=3 的生成在用户心里是「一次」，
-    三条记录会把合成记录刷满，还会让「最新一条」变成随机的那一份。
-    目录按任务 id 分，文件按份号命名，天然不会撞名，所以不必走 _reserve。
-    """
-    folder = Path(folder)
-    folder.mkdir(parents=True, exist_ok=True)
-    name = f"{int(index)}.wav"
-    sf.write(str(folder / name), np.asarray(wav, dtype=np.float32), sr)
-    return name
 
 
 def audio_duration(path: str | Path) -> float:
@@ -897,13 +864,6 @@ def stream_ready(p: dict) -> tuple[bool, str]:
     text = (p.get("text") or "").strip()
     if not text:
         return False, "请先输入要合成的文本。"
-    # 多份候选必须逐份跑完再挑：流式会在第一份就把声音放出来，而后面还有
-    # N-1 份要接着跑 —— 播完那一下用户会以为整件事结束了。
-    try:
-        if int(p.get("n") or 1) > 1:
-            return False, "多份候选要逐份跑完再挑，没法边生成边播。"
-    except (TypeError, ValueError):
-        pass
     if mode == "script":
         return False, "剧本工坊要逐句换角色、反复重建 prompt，流式会追不上播放。"
     if mode == "design":

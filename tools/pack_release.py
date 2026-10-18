@@ -14,7 +14,6 @@
     voices/     自己录/存下来的音色
     outputs/    生成结果与 history.json
     web/_uploads  web/_preview    界面上传的临时音频、试听缓存
-    web/_cand                      多份候选的临时落盘（选中的才进 outputs/）
     .workbuddy/ 项目笔记
 
 用法（在项目根目录）：
@@ -53,7 +52,7 @@ TOP_FILES = ["启动程序.bat", "启动程序-局域网.bat", "自检.bat", "�
 
 # 内容一律不带、但**目录要建出来**的：第一次启动时程序自己也会建，
 # 建出来是为了让对方解压后一眼看到「音色放这儿、结果出这儿」。
-EMPTY_DIRS = ["voices", "outputs", "web/_uploads", "web/_preview", "web/_cand"]
+EMPTY_DIRS = ["voices", "outputs", "web/_uploads", "web/_preview"]
 
 # 任何一层遇到这些目录名就整棵跳过
 SKIP_DIR_NAMES = {
@@ -76,7 +75,7 @@ SKIP_FILE_RE = re.compile(
 # 同样是「用户数据」，但它们在 web/ 里面 —— voices/、outputs/ 压根不在 TOP_DIRS 里，
 # 所以不用管；这两个得单独挡，否则会把别人上传的参考音频一起打出去。
 # （第一版就漏在这儿：清单里 web/ 显示 16.5 M，其中 15 M 是 _uploads。）
-SKIP_REL_DIRS = {"web/_uploads", "web/_preview", "web/_cand"}
+SKIP_REL_DIRS = {"web/_uploads", "web/_preview"}
 
 
 def human(n: float) -> str:
@@ -225,7 +224,6 @@ def write_notes(dest: Path, include_models: bool, items: list[tuple[Path, Path]]
         "  outputs/           生成结果与合成记录 history.json",
         "  web/_uploads/      界面上传的临时音频",
         "  web/_preview/      官方说话人试听缓存",
-        "  web/_cand/         多份候选的临时落盘（选中的才进 outputs/）",
         "  .workbuddy/        项目笔记",
         "",
         "这些目录已经在包里建好了空壳，程序第一次启动会把它们用起来。",
@@ -383,7 +381,7 @@ def main() -> int:
     items, total = walk_plan()
     print()
     print(f"  合计 {len(items)} 个文件，{human(total)}")
-    print("  不含：voices/ outputs/ web/_uploads/ web/_preview/ web/_cand/ .workbuddy/（个人数据）")
+    print("  不含：voices/ outputs/ web/_uploads/ web/_preview/ .workbuddy/（个人数据）")
     if args.list:
         print("\n（--list：没有写任何文件）")
         return 0

@@ -1,6 +1,6 @@
-"""验证「多份候选 / 长文本切段 / 真进度 / 原子落盘」这几块不需要 GPU 的逻辑。
+"""验证「长文本切段 / 真进度 / 原子落盘」这几块不需要 GPU 的逻辑。
 
-为什么单独一个脚本（而不是塞进 smoke.py）：这几项里有两处是**并发正确性**，
+为什么单独一个脚本（而不是塞进 smoke.py）：这里有两处是**并发正确性**，
 用「跑一次看结果」根本验不出来 —— 一个是 outputs/ 抢文件名，一个是进度回调
 的数量与顺序。它们必须被压着跑很多次、在隔离的目录里跑，才可信。
 
@@ -9,7 +9,7 @@
 「最近 8 条真实音频」抽样全变成读不出来的空文件）。
 
 跑法：
-    runtime\\python\\python.exe tools\\verify_takes.py
+    runtime\\python\\python.exe tools\\verify_split.py
 """
 from __future__ import annotations
 
@@ -43,12 +43,10 @@ def tone(n: int, value: float = 0.1) -> np.ndarray:
 # ---------------------------------------------------------------------------
 # 0. 隔离：所有落盘测试都跑在临时目录里
 # ---------------------------------------------------------------------------
-_tmp = Path(tempfile.mkdtemp(prefix="qs_takes_"))
-_real_out, _real_cand = cfg.OUTPUT_DIR, cfg.CAND_DIR
+_tmp = Path(tempfile.mkdtemp(prefix="qs_split_"))
+_real_out = cfg.OUTPUT_DIR
 cfg.OUTPUT_DIR = _tmp / "outputs"
-cfg.CAND_DIR = _tmp / "cand"
 cfg.OUTPUT_DIR.mkdir()
-cfg.CAND_DIR.mkdir()
 
 try:
     # -----------------------------------------------------------------------
@@ -117,20 +115,7 @@ try:
           f"{(cfg.OUTPUT_DIR / a).stat().st_size} vs {(cfg.OUTPUT_DIR / b).stat().st_size}")
 
     # -----------------------------------------------------------------------
-    # 4. 候选：写进临时目录 → 转正 → 原名消失、新的出现在 outputs/
-    # -----------------------------------------------------------------------
-    folder = cfg.CAND_DIR / "unitjob"
-    cn = core.save_candidate(tone(480), 24000, 1, folder)
-    check("候选写进 _cand/<job>/1.wav", (folder / cn).exists(), cn)
-    check("候选没进 outputs/", not (cfg.OUTPUT_DIR / cn).exists())
-
-    fn2 = core.promote_wav(folder / cn, "t3")
-    check("转正后出现在 outputs/", (cfg.OUTPUT_DIR / fn2).exists(), fn2)
-    check("转正后候选侧的原文件已移走", not (folder / cn).exists())
-    check("转正的文件名是正式前缀", fn2.startswith("t3_"), fn2)
-
-    # -----------------------------------------------------------------------
-    # 5. 内存护栏：超长文本在**开头**就被拒，不是跑到 90% 才炸
+    # 4. 内存护栏：超长文本在**开头**就被拒，不是跑到 90% 才炸
     # -----------------------------------------------------------------------
     try:
         core._synth_clone({"text": "字" * 100000, "ref_audio": "x", "xvec_only": True},
@@ -141,7 +126,7 @@ try:
         check("超过 4 小时音频被拒", False, "没有抛异常")
 
     # -----------------------------------------------------------------------
-    # 6. 长度闸只留给「不能切段」的声音设计
+    # 5. 长度闸只留给「不能切段」的声音设计
     # -----------------------------------------------------------------------
     try:
         core.synthesize({"mode": "design", "text": "字" * 3000, "instruct": "x"})
@@ -159,30 +144,18 @@ try:
           status.splitlines()[0][:40] if status else "")
 
     # -----------------------------------------------------------------------
-    # 7. 流式与多份候选互斥（后端也要挡，别只靠前端）
-    # -----------------------------------------------------------------------
-    ok1, why1 = core.stream_ready({"mode": "clone", "text": "短句。"})
-    check("1 份时克隆可以流式", ok1, why1)
-    ok2, why2 = core.stream_ready({"mode": "clone", "text": "短句。", "n": 3})
-    check("多份候选不允许流式", not ok2 and "候选" in why2, why2)
-    ok3, why3 = core.stream_ready({"mode": "clone", "text": "短句。", "n": "2"})
-    check("n 传成字符串也能挡住", not ok3, why3)
-
-    # -----------------------------------------------------------------------
-    # 8. 语速估计取自真实历史记录
+    # 6. 语速估计取自真实历史记录
     # -----------------------------------------------------------------------
     cps = history.chars_per_sec()
     check("chars_per_sec 是个合理的语速", 2.0 <= cps <= 9.0, str(cps))
 finally:
-    cfg.OUTPUT_DIR, cfg.CAND_DIR = _real_out, _real_cand
+    cfg.OUTPUT_DIR = _real_out
     shutil.rmtree(_tmp, ignore_errors=True)
 
 check("临时目录已清干净", not _tmp.exists(),
       "" if not _tmp.exists() else str(_tmp))
 check("真实 outputs/ 没被这次验证写过", not list(_real_out.glob("t_*")),
       str([p.name for p in _real_out.glob("t_*")][:3]))
-check("真实的 web/_cand/ 是空的", not list(_real_cand.glob("*")),
-      str([p.name for p in _real_cand.glob("*")][:3]))
 
 bad = [r for r in results if not r[1]]
 print(f"\n{'❌' if bad else '✅'} {len(results) - len(bad)}/{len(results)} 通过")

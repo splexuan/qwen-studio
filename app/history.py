@@ -83,11 +83,6 @@ def add(entry: dict) -> dict:
         # 没有它，「这条为什么比上次短 1.2 秒」事后根本查不出来 ——
         # 参数区显示的是「开没开」，这里记的是「实际动了多少」，不是一回事。
         "postprocess": entry.get("postprocess"),
-        # 多份候选：这条记录是「n 份里挑的第 index 份」。
-        # 存下来是因为「同样的参数跑三遍，最后留下的是最后那份」事后看结果卡是看不出来的
-        # —— 结果卡只描述被选中的那一条。
-        "takes": entry.get("takes"),
-        "pick": entry.get("pick"),
         "status": entry.get("status", "ok"),
     }
     with _LOCK:

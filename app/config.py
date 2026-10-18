@@ -55,12 +55,7 @@ VOICES_DIR = STUDIO_DIR / "voices"        # 音色库：参考音频 / 参考文
 OUTPUT_DIR = STUDIO_DIR / "outputs"       # 合成结果
 UPLOAD_DIR = WEB_DIR / "_uploads"         # 界面上传的临时音频
 PREVIEW_DIR = WEB_DIR / "_preview"        # 官方说话人的试听样例（生成一次后长期复用）
-# 「一次生成多份候选」的临时落盘：整份候选留在 _cand/<任务id>/ 下，
-# 用户挑中哪份才 os.replace 进 outputs/，其余随目录一起删掉。
-# 为什么不让每份都直接进 outputs/：那样列表里会一次冒出三条同参数记录，
-# 而用户心里那是**一次**生成。
-CAND_DIR = WEB_DIR / "_cand"
-for _d in (VOICES_DIR, OUTPUT_DIR, UPLOAD_DIR, PREVIEW_DIR, CAND_DIR):
+for _d in (VOICES_DIR, OUTPUT_DIR, UPLOAD_DIR, PREVIEW_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 
@@ -169,10 +164,6 @@ SCRIPT_GAP_SECS = 0.4
 # clone / official / script 都在下面按句切段（core.split_text），不再受它限制 ——
 # 长度由「预估 + 确认」管，不由硬上限管。
 MAX_TEXT_CHARS = 2000
-
-# 一次生成最多跑几份候选。上限 4 不是技术限制，是「再多也听不过来」；
-# 每多一份就多一份线性的 GPU 时间。
-MAX_TAKES = 4
 
 # 中文朗读的语速（字/秒），用于给长文本预估时长。
 # 4.8 取自 outputs/history.json 266 条实测的**中位数**（总字数 / 总时长 = 5.4，

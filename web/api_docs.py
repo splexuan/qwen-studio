@@ -131,8 +131,6 @@ ENDPOINTS: list[dict] = [
             ("ref_text", "str?", "参考音频文本；xvec_only=false 时必填"),
             ("xvec_only", "bool?", "仅用说话人向量；false 走完整 ICL，更贴参考韵律"),
             ("speaker", "str?", "mode=official 时的官方说话人 key"),
-            ("n", "int?", "一次生成几份候选（1–4，默认 1）。n>1 时 result 改给 "
-                           "candidates 数组，选中后用 /api/out/promote 转正"),
             ("postprocess", "bool?", "false = 整组后处理（去静音/归一化/淡入淡出）全关，默认 true"),
             ("pp_silence", "bool?", "去长静音：句中长停顿压短、首尾裁边，默认 true"),
             ("pp_normalize", "bool?", "音量归一化到 -20 dBFS（有声部分），默认 true"),
@@ -140,15 +138,6 @@ ENDPOINTS: list[dict] = [
             ("pp_mid_ms", "int?", "句中停顿超过多少毫秒才压，默认 500"),
             ("pp_edge_ms", "int?", "首尾各保留多少毫秒静音，默认 100"),
             ("pp_target_db", "float?", "归一化目标响度，默认 -20（范围 -40 ~ -6）"),
-        ],
-    },
-    {
-        "method": "POST", "path": "/api/out/promote", "group": "合成",
-        "desc": "把 n>1 那次生成里挑中的一份候选转正：改名进 outputs/、写合成记录，"
-                "其余候选连临时目录一起删掉。**只有这一步会产生记录** —— 候选本身只是草稿。",
-        "params": [
-            ("job", "str", "提交 /api/jobs 时返回的 job id"),
-            ("index", "int", "第几份，从 1 起（对应 result.candidates[].index）"),
         ],
     },
     {
@@ -173,7 +162,7 @@ ENDPOINTS: list[dict] = [
         "method": "GET", "path": "/api/jobs/{jid}", "group": "合成",
         "desc": "轮询任务：state ∈ queued/running/done/error；done 时 result 带音频 URL 与时长。"
                 "长文本生成期间还会带 pieces / piece 两个字段（共几段、走到了第几段），"
-                "前端据此画真进度，而不是拿时间硬猜。n>1 时 result 里是 candidates 数组。",
+                "前端据此画真进度，而不是拿时间硬猜。",
         "params": [("jid", "str", "任务 id")],
     },
     {
@@ -232,11 +221,6 @@ ENDPOINTS: list[dict] = [
     {
         "method": "GET", "path": "/media/upload/{name}", "group": "媒体",
         "desc": "回放临时上传的音频。", "params": [("name", "str", "临时文件名")],
-    },
-    {
-        "method": "GET", "path": "/media/cand/{jid}/{name}", "group": "媒体",
-        "desc": "回放多份候选里的一份。只在「还没挑选」期间有效 —— 转正后整个候选目录会被删掉。",
-        "params": [("jid", "str", "任务 id"), ("name", "str", "候选文件名，如 1.wav")],
     },
     {
         "method": "GET", "path": "/media/voice/{name}", "group": "媒体",

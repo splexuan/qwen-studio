@@ -95,9 +95,9 @@ qwen-studio/
    ├─ _ab/                实验产物（条件 JSON + 结论文本），用来重出试听页
    ├─ verify_xvec_ui.js   用无头浏览器验证「克隆方式」的显示、筛选与复选框联动
    ├─ verify_instr_tip.js 用无头浏览器验证指令框下方的情绪提示（情绪名 / 描述句两种形态）
-   ├─ verify_takes.py    验证长文本切段/进度回调/原子落盘/候选转正（纯 Python，不加载权重；
+   ├─ verify_split.py    验证长文本切段/进度回调/原子落盘（纯 Python，不加载权重；
    │                       全程把 OUTPUT_DIR 指到临时目录，不在 outputs/ 留东西）
-   └─ verify_takes_ui.js  用无头浏览器验证克隆页：字数预估、生成份数、候选挑选、真进度（34 项）
+   └─ verify_split_ui.js  用无头浏览器验证克隆页：字数预估、不限字数、真进度（20 项）
 ```
 
 > 所有测试脚本都认环境变量 `QWENSTUDIO_PORT`：默认 `7867`，测试实例换了端口时
@@ -273,7 +273,7 @@ Qwen3-TTS 的 `instruct` 由内核的 `_build_instruct_text()` 包成一个对�
 
 ---
 
-## 长文本、多份候选、真进度（语音克隆页）
+## 长文本与真进度（语音克隆页）
 
 ### 1. 不再有字数上限
 
@@ -281,7 +281,11 @@ Qwen3-TTS 的 `instruct` 由内核的 `_build_instruct_text()` 包成一个对�
 三个数全从服务端来 —— 语速是 `outputs/history.json` 的**实测中位数**（`limits.chars_per_sec`，
 本机约 4.9 字/秒），单段切分取自档位（`limits.chunk_chars`），不是写死的常量。
 
-- `clone` / `official` / `script` **都按句自动切段**（`core.split_text`），多长都能念。
+「长文本」只有一个含义：**按句切成多段，每段用同样的参数依次生成，最后拼成一条音频**
+（段间插 `SCRIPT_GAP_SECS`）。切段是 `core.split_text`，clone / official / script 三条路共用
+`core._run_pieces`，所以「切几段、怎么拼、进度怎么报」三个口径完全一致。
+
+- `clone` / `official` / `script` **都按句自动切段**，多长都能念。
 - **只有声音设计仍然限 2000 字**，而且不能放开：它每段都是一把**新嗓子**（上游没有固定 seed），
   切开再拼起来会变成两把不同的嗓子念同一段话 —— 那比拒绝生成更糟。
 - 两道仍然存在的闸，都不是体验限制：
@@ -290,18 +294,7 @@ Qwen3-TTS 的 `instruct` 由内核的 `_build_instruct_text()` 包成一个对�
     四小时音频光拼好的那条就 1.4 GB，拼接时峰值还是它的两倍 —— 这是内存保护，
     而且是在**开头**拒，不是跑到 90% 才 OOM。
 
-### 2. 一次生成多份候选
-
-结果卡上的「生成份数」1–4。候选写进 `web/_cand/<job>/`，**不写合成记录**
-（一次 n=3 的生成在用户心里只是「一次」，三条记录会把列表刷满、还会让「最新一条」变成随机那份）。
-听过之后点「选这条」→ `POST /api/out/promote` → `os.replace` 进 `outputs/` + 写一条记录
-（带 `takes` / `pick`），其余候选连目录一起删掉。
-
-- 多份候选**不能流式**：流式会在第一份就把声音放出去，而后面还有 N-1 份要跑。前端会把这个开关灰掉并说明原因，
-  后端 `stream_ready()` 也挡（别只靠前端）。
-- 服务启动时清空 `web/_cand/`：job id 只活在内存里，重启后那些 wav 再没人认领。
-
-### 3. 进度是真的，不是时间猜的
+### 2. 进度是真的，不是时间猜的
 
 `core.synthesize(p, on_progress)` 逐段回调 `(done, total, stage)`，`server` 把它线性映射进任务进度，
 并把 `pieces` / `piece` 一起返回。前端只要看到 `pieces > 1` 就直接用后端真值，不再走时间缓动：
@@ -314,12 +307,11 @@ Qwen3-TTS 的 `instruct` 由内核的 `_build_instruct_text()` 包成一个对�
 为什么要分两种：单段时后端**确实**没有更细的信息（一次不可分割的模型调用），
 这时时间缓动是唯一诚实的近似；而多段时手上有真话还去猜，只会出现「87% 停十分钟」。
 
-### 4. 落盘改成原子写
+### 3. 落盘改成原子写
 
 `save_wav()` 先 `touch(exist_ok=False)` 抢名字（O_CREAT|O_EXCL，NTFS 上原子），
 再写 `<name>.part<pid>_<tid>.wav`，最后 `os.replace`。原来「先 `while path.exists()` 选名字、
-再 `sf.write`」是典型的查-写竞态；以前碰不到是因为写盘几乎总在 GPU 锁后面排队，
-多份候选把这条路径打开了。
+再 `sf.write`」是典型的查-写竞态 —— 只是以前写盘几乎总在 GPU 锁后面排队，没被撞见过。
 
 ---
 
@@ -469,7 +461,7 @@ NVIDIA GeForce RTX 3060 Laptop GPU · 6.0 GiB · bfloat16 · 默认 1.7B
 
 ```
 runtime\python\python.exe tools\smoke.py         # 约 62 项接口断言
-runtime\python\python.exe tools\verify_takes.py  # 切段 / 进度 / 原子落盘 / 候选转正（不加载权重）
+runtime\python\python.exe tools\verify_split.py  # 切段 / 进度 / 原子落盘（不加载权重）
 runtime\python\python.exe tools\bench.py 御姐    # 冷热路径与 RTF 基准
 ```
 

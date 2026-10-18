@@ -651,41 +651,12 @@ html[data-theme="dark"] .btn--danger:hover{color:var(--bg)}
   color:var(--text-3); line-height:1.5}
 .streamsw:has(input:checked){background:var(--accent-soft)}
 .streamsw:has(input:checked) b{color:var(--ink-role)}
-/* 灰掉的流式开关（选了多份候选时）：不是隐藏，是「看得见但有原因」——
-   藏起来用户会以为这功能没了。 */
-.streamsw.is-off{opacity:.5; cursor:not-allowed}
-/* 克隆页的「生成份数」：1–4 一小段，右边一句说明。
-   复用 .seg 的外观，但**不许它铺满** —— .seg__b 的 flex:1 会把 4 个按钮
-   拉成一整行，看着像第二条主导航。 */
-.takesrow{display:flex; align-items:center; gap:var(--s-2); flex-wrap:wrap;
-  margin:0 var(--s-5) var(--s-4); padding:var(--s-3);
-  border-radius:var(--r-sm); background:var(--surface-2)}
-.takesrow__t{font-size:var(--fs-sm); font-weight:700; color:var(--text)}
-.takesrow .hint{flex:1 1 160px; min-width:0; font-size:var(--fs-xs)}
-.seg--mini{margin:0; gap:2px; padding:2px}
-.seg--mini .seg__b{flex:0 0 auto; min-width:30px; height:26px; padding:0 var(--s-2);
-  font-size:var(--fs-xs); font-variant-numeric:tabular-nums}
 /* 长文本预估那一行：平常是灰提示，久到要确认时变橙、真的超内存才变红。
    正文色走 *-ink：--warn / --err 本身是给色块图标用的，对白底只有 ~4.5:1。 */
 .est--warn{color:var(--warn-ink)}
 .est--warn b{color:var(--warn-ink)}
 .est--bad{color:var(--err-ink)}
 .est--bad b{color:var(--err-ink)}
-/* 多份候选：一张表，每行一份 —— 试听 / 时长 / 「选这条」。
-   只留一行播放器（结果卡上方那个），不给每份都造一个波形 ——
-   四条波形并排，谁也听不出哪条是哪条。 */
-.cands{padding:0 var(--s-5) var(--s-4)}
-.cands__t{font-size:var(--fs-xs); font-weight:650; color:var(--text-3);
-  letter-spacing:.04em; margin-bottom:var(--s-2)}
-.cand{display:flex; align-items:center; gap:var(--s-2); padding:var(--s-2) var(--s-3);
-  border-radius:var(--r-sm); background:var(--surface-2); margin-bottom:var(--s-2)}
-.cand.is-on{box-shadow:inset 0 0 0 1px var(--accent-line); background:var(--accent-soft)}
-.cand__n{flex:0 0 auto; width:20px; font-size:var(--fs-sm); font-weight:700;
-  color:var(--text); font-variant-numeric:tabular-nums}
-.cand__d{flex:0 0 auto; font-size:var(--fs-xs); color:var(--text-3);
-  font-variant-numeric:tabular-nums}
-.cand__sp{flex:1 1 auto; min-width:0}
-.cand__b{flex:0 0 auto}
 /* 镜像期间：进度条跟着真正在响的那条通道走，播放按钮锁住 ——
    这时候按下去只会开出第二条音轨，两个声音差着半秒。 */
 .is-mirror .pbtn{opacity:.45; cursor:default}
@@ -2570,17 +2541,6 @@ function createResult(host, { prefix = "", goLabel = "生成语音" } = {}) {
         <b>边生成边播</b>
         <em>长文本不用等全部合成完 —— 点生成后不到一秒就开始出声</em>
       </label>` : ""}
-      ${prefix === "c" ? `
-      <div class="takesrow" data-role="takesrow">
-        <span class="takesrow__t">生成份数</span>
-        <div class="seg seg--mini" role="group" aria-label="生成份数" data-role="takes">
-          ${Array.from({ length: estLim().maxTakes }, (_, i) =>
-            `<button class="seg__b${i === 0 ? " is-on" : ""}" type="button"
-                     data-n="${i + 1}" aria-pressed="${i === 0}">${i + 1}</button>`).join("")}
-        </div>
-        <span class="hint">同样参数跑几遍，听完挑一条留下；没选中的自动丢弃</span>
-      </div>` : ""}
-      <div class="hidden cands" data-role="cands"></div>
       <div class="hidden" data-role="playerbox" style="padding:var(--s-4) var(--s-5) 0"></div>
       <div class="hidden metrics" data-role="metrics" style="padding:0 var(--s-5)"></div>
       <div class="hidden params" data-role="params"></div>
@@ -2612,9 +2572,6 @@ function createResult(host, { prefix = "", goLabel = "生成语音" } = {}) {
     msg: $('[data-role=msg]', host), alerts: $('[data-role=alerts]', host),
     cancel: $('[data-role=cancel]', host),
     streamon: $('[data-role=streamon]', host),
-    takes: $('[data-role=takes]', host),
-    takesrow: $('[data-role=takesrow]', host),
-    cands: $('[data-role=cands]', host),
     // 手机上这块卡的主按钮要吸在屏幕底部，生成期间还会在上面写进度 —— 先拿住它
     go: prefix ? $(`#${prefix}-go`) : null,
     goLabel,
@@ -2631,21 +2588,6 @@ function createResult(host, { prefix = "", goLabel = "生成语音" } = {}) {
     R.streamon.addEventListener("change", () => {
       localStorage.setItem("qs-stream", R.streamon.checked ? "1" : "0");
     });
-  }
-  if (R.takes) {
-    // 单选一组按钮：换选中项时两片的边框/底色必须同时换，所以整组重刷，
-    // 别只改被点的那一个。
-    R.takes.addEventListener("click", (e) => {
-      const b = e.target.closest(".seg__b");
-      if (!b) return;
-      $$(".seg__b", R.takes).forEach((x) => {
-        const on = x === b;
-        x.classList.toggle("is-on", on);
-        x.setAttribute("aria-pressed", on ? "true" : "false");
-      });
-      syncStreamAvail(R);
-    });
-    syncStreamAvail(R);
   }
   return R;
 }
@@ -2668,23 +2610,6 @@ function paintResult(R, d) {
     return;
   }
   R.idle.classList.add("hidden");
-
-  // 多份候选是「还没挑」的中间态：没有唯一的最终结果可画，所以播放器先空着
-  // （点某一份的「试听」才把音频塞进去），参数表照常显示 —— 几份用的是同一套参数。
-  if (Array.isArray(d.candidates) && d.candidates.length) {
-    paintCandidates(R, d);
-    const ph = paramsHTML(d.params, { took: d.took });
-    R.params.innerHTML = ph;
-    R.params.classList.toggle("hidden", !ph);
-    R.params.classList.add("is-first");
-    R.metrics.classList.add("hidden");
-    R.acts.classList.add("hidden");
-    R.alerts.innerHTML = String(d.message || "")
-      .split("\n").filter((x) => x.trim()).map((l) => noteHTML(l, "info")).join("");
-    return;
-  }
-  R.cands.classList.add("hidden");
-  R.cands.innerHTML = "";
 
   const lvl = d.level || "ok";
   R.badge.dataset.state = lvl === "ok" ? "done" : (lvl === "warn" ? "warn" : "error");
@@ -2735,67 +2660,6 @@ function paintResult(R, d) {
    7. 任务执行：提交 → 轮询 → 画结果
    ============================================================================ */
 let HISTORY_DIRTY = false;
-
-/* 多份候选的挑选界面。
-   布局上只借用结果卡上方那**一个**播放器（点「试听」把某份塞进去），
-   不给每份都造一条波形 —— 四条波形并排，谁也分不清哪条是哪条。
-   「选这条」才真正落盘：转正进 outputs/ + 写一条合成记录，其余几份当场删掉。
-   这不是「多存几个文件」的吝啬，是一次 n=3 的生成在用户心里只是**一次**。 */
-function paintCandidates(R, d) {
-  const list = d.candidates || [];
-  R.badge.dataset.state = "warn";
-  R.badge.textContent = `${list.length} 份待挑`;
-  R.cands.classList.remove("hidden");
-  R.cands.innerHTML = `<div class="cands__t">听过之后挑一条留下 —— 其余会被删除</div>`
-    + list.map((c) => `
-      <div class="cand" data-i="${c.index}">
-        <span class="cand__n">${c.index}</span>
-        <span class="cand__d">${esc(fmtTime(c.duration || 0))}</span>
-        <span class="cand__sp"></span>
-        <button class="btn btn--ghost btn--sm cand__b" type="button" data-role="try">试听</button>
-        <button class="btn btn--primary btn--sm cand__b" type="button" data-role="keep">选这条</button>
-      </div>`).join("");
-
-  // 委托挂在容器上：候选行是 paintCandidates 每次重建的，
-  // 逐行 addEventListener 会在第二次生成后指向已经不存在的节点。
-  R.cands.onclick = async (e) => {
-    const row = e.target.closest(".cand");
-    if (!row) return;
-    const idx = parseInt(row.dataset.i, 10);
-    const cand = list.find((x) => x.index === idx);
-    if (!cand) return;
-
-    if (e.target.closest("[data-role=try]")) {
-      $$(".cand", R.cands).forEach((r) => r.classList.toggle("is-on", r === row));
-      R.playerbox.classList.remove("hidden");
-      R.player.setURL(cand.url, `候选${idx}.wav`);
-      try { await R.player.audio.play(); } catch (_) { /* 自动播放被拦，用户自己点播放键 */ }
-      return;
-    }
-
-    if (!e.target.closest("[data-role=keep]")) return;
-    // 转正是**一次性**动作：先把所有按钮锁住，避免连点两下转出两个文件
-    const btns = $$("[data-role=keep]", R.cands);
-    btns.forEach((b) => { b.disabled = true; });
-    try {
-      const r = await post("/api/out/promote", { job: d.job, index: idx });
-      HISTORY_DIRTY = true;
-      R.cands.classList.add("hidden");
-      R.cands.innerHTML = "";
-      // 转正后回到普通结果卡。播放器会重新指向正式文件（同一段音频重头放一遍）——
-      // 这一步是有意的：从这一刻起界面上的那条 URL 才是真的存在的产物。
-      paintResult(R, {
-        url: r.url, file: r.file, duration: r.duration, level: r.level,
-        message: r.message, params: d.params, took: r.took,
-        postprocess: r.postprocess,
-      });
-      toast(`已采用第 ${idx} 份`, "ok");
-    } catch (err) {
-      btns.forEach((b) => { b.disabled = false; });
-      toast(err.message, "err");
-    }
-  };
-}
 
 /* 生成中的进度呈现。
    后端能报两种粒度：
@@ -3032,13 +2896,6 @@ function clearResult(R, { keepIdle = true } = {}) {
   R.metrics.classList.add("hidden");
   R.params.classList.add("hidden");
   R.acts.classList.add("hidden");
-  // 候选列表也要收掉，并把 onclick 解绑 —— 它闭包着上一轮的 job id，
-  // 留着的话下一轮的「选这条」会拿着旧 id 去转正一份已经不存在的候选。
-  if (R.cands) {
-    R.cands.classList.add("hidden");
-    R.cands.innerHTML = "";
-    R.cands.onclick = null;
-  }
   R.alerts.innerHTML = "";
   if (!keepIdle) R.idle.classList.add("hidden");
 }
@@ -3091,9 +2948,7 @@ async function runJob(payload, R) {
   const t0 = Date.now();
   // 边生成边播：开关打开、且这一单支持流式时才走。
   // 返回 null = 后端说这单不该流式（409），安静落回普通任务，不打扰用户。
-  // 多份候选必须逐份跑完再挑：流式会在第一份就把声音放出来，而后面还有 N-1 份
-  // 要接着跑 —— 播完那一下用户会以为整件事结束了。所以 n>1 直接不走流式。
-  if (R && R.streamon && R.streamon.checked && !(Number(payload.n) > 1)) {
+  if (R && R.streamon && R.streamon.checked) {
     let s = null;
     try {
       s = await runStream(payload, R, ctrl);
@@ -3171,9 +3026,6 @@ async function runJob(payload, R) {
       // 用服务端报的合成耗时（和合成记录里那个数一致）；老服务端没这个字段时退回前端掐的
       took: res.took ?? (Date.now() - t0) / 1000,
       postprocess: res.postprocess,
-      // 多份候选：这里给的是「还没挑」的中间态，挑完还要再 drawResult 一次
-      candidates: res.candidates,
-      job,
     });
 
     // 手机上结果卡在长表单底下（要滑过两屏），生成完了得把视线自己带过去。
@@ -3184,9 +3036,7 @@ async function runJob(payload, R) {
         R.root.scrollIntoView({ behavior: "smooth", block: "center" });
       }
     }
-    toast(res.candidates?.length
-      ? `生成了 ${res.candidates.length} 份候选，挑一条留下`
-      : "生成完成", "ok");
+    toast("生成完成", "ok");
     return { ok: true, res, message: st.message };
   } catch (e) {
     // 用户点了取消 → abort 会让 fetch 抛 AbortError，这不是「失败」
@@ -4140,7 +3990,7 @@ function syncXvecToVoice(v) {
 /* ---------------------------------------------------------------------------
    长文本预估
    克隆页**不再有字数上限**，取而代之的是「先告诉你大概要多久」。
-   四个数全部来自服务端（本机实测语速 / 单段切分 / 最多几份 / 内存天花板），
+   三个数全部来自服务端（本机实测语速 / 单段切分 / 内存天花板），
    前端一个都不许写死 —— 换个档位或换批历史记录，写死的值就全错。
 --------------------------------------------------------------------------- */
 function estLim() {
@@ -4148,7 +3998,6 @@ function estLim() {
   return {
     cps: Number(L.chars_per_sec) || 4.8,          // 字/秒，历史记录里的中位数
     chunk: Number(L.chunk_chars) || 60,           // 单段切分长度
-    maxTakes: Math.max(1, Number(L.max_takes) || 4),
     maxSecs: Number(L.max_audio_secs) || 14400,
   };
 }
@@ -4171,28 +4020,6 @@ function fmtSpan(sec) {
   const m = sec / 60;
   if (m < 60) return (m < 10 ? m.toFixed(1) : String(Math.round(m))) + " 分钟";
   return (m / 60).toFixed(1) + " 小时";
-}
-
-// 结果卡上「生成份数」当前选的是几。控件不在（非克隆页、或后端不支持）就是 1。
-function takesOf(R) {
-  const box = R && R.takes;
-  if (!box) return 1;
-  const on = box.querySelector(".seg__b.is-on");
-  const n = parseInt(on?.dataset.n, 10) || 1;
-  return Math.max(1, Math.min(estLim().maxTakes, n));
-}
-
-/* 多份候选与「边生成边播」互斥：流式是一份从头播到尾，n>1 时后面还有几份要接着跑。
-   选多份时把这个开关**灰掉并说明原因** —— 而不是让用户勾着却偷偷不生效
-   （那会变成「设了没反应」，比不给选项更让人怀疑）。 */
-function syncStreamAvail(R) {
-  if (!R || !R.streamon) return;
-  const multi = takesOf(R) > 1;
-  R.streamon.disabled = multi;
-  const box = R.streamon.closest(".streamsw");
-  if (!box) return;
-  box.classList.toggle("is-off", multi);
-  box.title = multi ? "多份候选要逐份跑完再挑，没法边生成边播。用 1 份时可用。" : "";
 }
 
 // 克隆页输入框下面那行提示：空框是引导，有字就是预估。
@@ -4293,27 +4120,22 @@ function initClone() {
     // 等完一圈才被拒），二是「久到不像话」的一次运行 —— 那种情况给个确认，
     // 因为一旦开始，几十分钟里同机的其他生成都排在它后面。
     const plan = estPlan(text.length);
-    const takes = takesOf(RAILS.c.R);
     const L = estLim();
     if (plan && plan.audio > L.maxSecs) {
       toast(`这段约 ${fmtSpan(plan.audio)} 音频，超出单次内存上限，请拆成几次生成`, "err");
       return;
     }
-    if (plan) {
-      const totalWait = plan.wait * takes;
-      if (totalWait > 1800) {
-        const ok = await askConfirm({
-          title: "这一条要跑一阵子",
-          body: `<p class="apidesc">${text.length} 字，预计切成 <b>${plan.pieces}</b> 段，`
-              + `成品音频约 <b>${fmtSpan(plan.audio)}</b>，生成约 <b>${fmtSpan(totalWait)}</b>`
-              + `${takes > 1 ? `（${takes} 份候选，是单份的 ${takes} 倍）` : ""}。</p>
-            <p class="apidesc">跑起来之后同机的其他生成都会排在它后面（一共只有一张卡），
-              而且关掉页面也不会中止 —— 结果会照常写进「合成记录」。
-              中途想改主意，可以在结果卡上点「停止等待」（任务本身仍会跑完）。</p>`,
-          okLabel: "开始生成",
-        });
-        if (!ok) return;
-      }
+    if (plan && plan.wait > 1800) {
+      const ok = await askConfirm({
+        title: "这一条要跑一阵子",
+        body: `<p class="apidesc">${text.length} 字，预计切成 <b>${plan.pieces}</b> 段，`
+            + `成品音频约 <b>${fmtSpan(plan.audio)}</b>，生成约 <b>${fmtSpan(plan.wait)}</b>。</p>
+          <p class="apidesc">跑起来之后同机的其他生成都会排在它后面（一共只有一张卡），
+            而且关掉页面也不会中止 —— 结果会照常写进「合成记录」。
+            中途想改主意，可以在结果卡上点「停止等待」（任务本身仍会跑完）。</p>`,
+        okLabel: "开始生成",
+      });
+      if (!ok) return;
     }
 
     const payload = {
@@ -4322,7 +4144,6 @@ function initClone() {
       xvec_only: $("#c-xvec").checked,
       ...ppPayload(),
     };
-    if (takes > 1) payload.n = takes;
     if (STATE.clone.src === "lib") {
       if (!STATE.clone.voice) { toast("先选一个音色", "warn"); return; }
       payload.voice = STATE.clone.voice;
