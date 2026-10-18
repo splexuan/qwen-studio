@@ -55,7 +55,12 @@ VOICES_DIR = STUDIO_DIR / "voices"        # 音色库：参考音频 / 参考文
 OUTPUT_DIR = STUDIO_DIR / "outputs"       # 合成结果
 UPLOAD_DIR = WEB_DIR / "_uploads"         # 界面上传的临时音频
 PREVIEW_DIR = WEB_DIR / "_preview"        # 官方说话人的试听样例（生成一次后长期复用）
-for _d in (VOICES_DIR, OUTPUT_DIR, UPLOAD_DIR, PREVIEW_DIR):
+# 「一次生成多份候选」的临时落盘：整份候选留在 _cand/<任务id>/ 下，
+# 用户挑中哪份才 os.replace 进 outputs/，其余随目录一起删掉。
+# 为什么不让每份都直接进 outputs/：那样列表里会一次冒出三条同参数记录，
+# 而用户心里那是**一次**生成。
+CAND_DIR = WEB_DIR / "_cand"
+for _d in (VOICES_DIR, OUTPUT_DIR, UPLOAD_DIR, PREVIEW_DIR, CAND_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 
@@ -160,8 +165,26 @@ CLONE_XVEC_ONLY = False
 # 长剧本分段合成时，段与段之间插入的静音（秒）。原项目用 0.4s。
 SCRIPT_GAP_SECS = 0.4
 
-# 单次生成的最长文本字符数（超出会被拒绝，提示分段）。防止误贴长文直接 OOM。
+# 「一口气整体送进模型」的模式（目前只有声音设计）的最长文本字符数。
+# clone / official / script 都在下面按句切段（core.split_text），不再受它限制 ——
+# 长度由「预估 + 确认」管，不由硬上限管。
 MAX_TEXT_CHARS = 2000
+
+# 一次生成最多跑几份候选。上限 4 不是技术限制，是「再多也听不过来」；
+# 每多一份就多一份线性的 GPU 时间。
+MAX_TAKES = 4
+
+# 中文朗读的语速（字/秒），用于给长文本预估时长。
+# 4.8 取自 outputs/history.json 266 条实测的**中位数**（总字数 / 总时长 = 5.4，
+# 但那被几条长稿拉高了；短句实测集中在 3.5–4.7）。bootstrap 会把它换成
+# 本机历史记录里的实时中位数，这个常量只是没数据时的兜底。
+CHARS_PER_SEC = 4.8
+
+# 单次生成的**音频时长**硬天花板（秒）。这不是体验限制，是内存保护：
+# 24 kHz float32 单声道 = 96 KB/s，四小时音频光拼好的那条就 1.4 GB，
+# 而且拼接过程中每段都还在内存里 —— 再往上必 OOM，而且是在最后拼接时才炸，
+# 前面几十分钟全白跑。宁可开头就拒绝，也不让人跑到 90% 才失败。
+MAX_AUDIO_SECONDS = 4 * 3600
 
 # 合成记录最多保留条数（只存参数，不存音频副本）
 HISTORY_MAX = 300

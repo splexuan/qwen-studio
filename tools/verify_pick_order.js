@@ -24,16 +24,27 @@ function check(name, ok, detail = "") {
   // 挑最后一个音色收藏 —— 它原本排最后，收藏后必须跑到两处的最前面。
   // 从接口拿而不是读 window.BOOT：BOOT 是脚本作用域里的变量，不挂在 window 上。
   const all = await fetch(BASE + "/api/voices").then((r) => r.json());
-  const target = (all.voices || []).length ? all.voices[all.voices.length - 1].name : "";
+  const voices = all.voices || [];
+  // 用户自己的收藏是**他的数据**。这套断言要成立（「只有一个星标」「收藏的排第一」），
+  // 前提是库里的星标只有本脚本加的那一个 —— 所以先全部取消、记下原本有谁，
+  // 跑完再原样恢复。不这么做的话，库里本来就有收藏时这几条永远红着。
+  const originallyStarred = voices.filter((v) => v.starred).map((v) => v.name);
+  const setStar = async (name, on) => {
+    await fetch(`${BASE}/api/voices/${encodeURIComponent(name)}/star`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ starred: on }),
+    });
+  };
+  for (const n of originallyStarred) await setStar(n, false);
+
+  const fresh = (await fetch(BASE + "/api/voices").then((r) => r.json())).voices || [];
+  const target = fresh.length ? fresh[fresh.length - 1].name : "";
   check("拿到一个可以用来收藏的音色", !!target, target);
 
   // 改动走 Node 侧请求，再 reload 让页面按真实路径重新拿数据。
   // （evaluate 里的函数是在浏览器里跑的，拿不到 Node 作用域的变量 —— 之前就栽在这上面。）
   const star = async (on) => {
-    await fetch(`${BASE}/api/voices/${encodeURIComponent(target)}/star`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ starred: on }),
-    });
+    await setStar(target, on);
     await p.reload({ waitUntil: "load" });
     await p.waitForSelector("#c-pick", { state: "attached", timeout: 20000 });
     await p.waitForTimeout(600);
@@ -79,11 +90,15 @@ function check(name, ok, detail = "") {
 
   check("控制台没有报错", errs.length === 0, errs.slice(0, 2).join(" | "));
 
-  // ---- 还原 ----
-  await star(false);
+  // ---- 还原：撤掉本脚本的收藏，再把用户原本收藏的那些放回去 ----
+  await setStar(target, false);
+  for (const n of originallyStarred) await setStar(n, true);
   const after = await fetch(BASE + "/api/voices").then((r) => r.json());
-  const restored = (after.voices || []).filter((v) => v.starred).length;
-  check("收藏已还原（无残留）", restored === 0, `${restored} 个`);
+  const restoredSet = (after.voices || []).filter((v) => v.starred)
+    .map((v) => v.name).sort().join(",");
+  const beforeSet = [...originallyStarred].sort().join(",");
+  check("收藏已还原（与测试前一致）", restoredSet === beforeSet,
+    `测试前 [${beforeSet}] → 现在 [${restoredSet}]`);
 
   await b.close();
   const bad = results.filter((r) => !r.ok);

@@ -22,6 +22,8 @@ voices/
 outputs/
 web/_uploads/
 web/_preview/
+# 多份候选的临时落盘：一次生成跑到一半被杀掉时会留下几份没被挑选的 wav
+web/_cand/
 
 # ---- 打包产物 ----
 dist/

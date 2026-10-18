@@ -26,10 +26,11 @@ DOM 结构上反复与你抢控制权（哈希类名随版本变、注入的 CSS
     POST /api/voices/delete                批量删除
     POST /api/script/preview               剧本实时预览（纯解析，不加载模型）
     POST /api/jobs       GET /api/jobs/{id}  提交合成任务 / 轮询进度
+    POST /api/out/promote                  多份候选里挑一条转正（改名进 outputs/ 并落记录）
     POST /api/speakers/{name}/preview      官方说话人试听（缓存命中直接给 URL，否则排队生成）
     GET  /api/history                      合成记录
     POST /api/history/delete  /clear       删除 / 清空记录
-    GET  /media/{out|upload|voice|preview}/{name}  音频回放
+    GET  /media/{out|upload|voice|preview|cand}/{name}  音频回放
     GET  /api/docs                         接口清单
     GET  /openapi.json                     FastAPI 自动生成的机器可读规格
 
@@ -174,10 +175,18 @@ def api_bootstrap():
         },
         "asr": {"available": asr_ok, "reason": asr_why},
         "limits": {
+            # 只对**不能分段**的模式有效（目前只有声音设计）。clone / official /
+            # script 都是按句切段生成的，长度不再有硬上限 —— 前端据 mode 判断。
             "max_text_chars": cfg.MAX_TEXT_CHARS,
             "ref_min_secs": voices_mod.REF_MIN_SECS,
             "ref_good_max_secs": voices_mod.REF_GOOD_MAX_SECS,
             "url_max_mb": cfg.URL_IMPORT_MAX_MB,
+            # 长文本预估用的三个数：本机实测语速（中位数）、单段切分长度、
+            # 一次最多几份候选。前端不许自己写死这几个值 —— 换个档位就全错。
+            "chars_per_sec": history_mod.chars_per_sec(),
+            "chunk_chars": cfg.profile().script_chunk_chars,
+            "max_takes": cfg.MAX_TAKES,
+            "max_audio_secs": cfg.MAX_AUDIO_SECONDS,
         },
         "defaults": {
             "xvec_only": cfg.CLONE_XVEC_ONLY,
@@ -468,6 +477,13 @@ async def api_script_preview(payload: dict):
 # ---------------------------------------------------------------------------
 _JOBS: dict[str, dict] = {}
 _JOBS_LOCK = threading.Lock()
+# 任务的原始参数：多份候选挑中之后要靠它写合成记录。
+# 刻意**不**放进 _JOBS —— 那个 dict 会被 /api/jobs/{id} 原样吐给前端，
+# 里面 ref_audio 是服务端拼的绝对路径，前端本来不必知道。
+_JOB_ARGS: dict[str, dict] = {}
+
+# 输出文件名的前缀。直接进 outputs/ 和「候选转正」两条路必须用同一套。
+_TAG = {"clone": "clone", "design": "design", "official": "official", "script": "script"}
 
 
 def _job_set(jid: str, **kw) -> None:
@@ -483,12 +499,42 @@ def _new_job(kind: str, params: dict) -> str:
             "message": "排队中…", "progress": 0.0, "result": None,
             "created": time.time(),
         }
+        _JOB_ARGS[jid] = dict(params)
         # 只保留最近 100 个任务，避免长跑后内存无限增长
         if len(_JOBS) > 100:
             for k in sorted(_JOBS, key=lambda x: _JOBS[x]["created"])[:-100]:
                 _JOBS.pop(k, None)
+                _JOB_ARGS.pop(k, None)
     threading.Thread(target=_run_job, args=(jid, kind, params), daemon=True).start()
     return jid
+
+
+def _prog_cb(jid: str, lo: float, hi: float, prefix: str = "", state: dict | None = None):
+    """把 core 的「第 i/n 段」映射成任务的整体进度。
+
+    区间为什么由调用方给：core 只知道「这一段生成完了」，不知道这一单
+    整体跑了多少（多份候选时后面还有几轮）—— 这里只做线性映射，
+    百分比的口径就全在一处，前端不用关心是实现细节。
+
+    ``state`` 是**跨份共享**的一个小字典：core 每份开头都会报一次 load，
+    但模型其实只在第一份时真加载 —— 后面几份还写「正在准备模型」就是假话，
+    用户会盯着那句以为卡住了。
+    """
+    st = state if state is not None else {}
+
+    def cb(done: int, total: int, stage: str = "gen") -> None:
+        frac = (done / total) if total else 0.0
+        if stage == "gen":
+            st["warm"] = True
+        if stage == "load" and not st.get("warm"):
+            msg = f"{prefix}正在准备模型…"
+        elif total <= 1:
+            msg = f"{prefix}正在生成音频…"
+        else:
+            msg = f"{prefix}第 {done}/{total} 段"
+        _job_set(jid, progress=round(lo + (hi - lo) * frac, 3), message=msg,
+                 pieces=int(total), piece=int(done))
+    return cb
 
 
 def _run_job(jid: str, kind: str, p: dict) -> None:
@@ -514,39 +560,97 @@ def _run_job(jid: str, kind: str, p: dict) -> None:
         # 这里先归一化成「实际生效的值」，synthesize 拿到的输入完全等价。
         p["language"] = p.get("language") or "Auto"
         p["size"] = cfg.resolve_size(p.get("size"))
-        _job_set(jid, state="running", progress=0.1,
+
+        # 份数：同样的参数一次跑 n 遍，让用户听出差别再挑一条。
+        # pop 掉是为了别让它混进合成记录（记录里用的是 takes / pick 两个字段）。
+        try:
+            takes = int(p.pop("n", 1) or 1)
+        except (TypeError, ValueError):
+            takes = 1
+        takes = max(1, min(cfg.MAX_TAKES, takes))
+
+        _job_set(jid, state="running", progress=0.02,
                  message="正在准备模型 —— 首次使用该规格要加载权重并预热 CUDA graph，"
                          "通常十几到几十秒。")
         t_synth = time.time()
-        wav, sr, status, level, pp_stats = core.synthesize(p)
-        # 生成耗时：合成记录和结果卡显示的是同一个数（之前记录里根本没有这项，
-        # 结果卡的耗时是前端掐的，两边对不上）
-        took = round(time.time() - t_synth, 2)
-        if level == "error":
-            _job_set(jid, state="error", message=status, progress=1.0)
-            history_mod.add({**p, "status": "error", "file": "", "duration": 0, "took": took})
+        tag = _TAG.get(p.get("mode", "clone"), "audio")
+        prog_state: dict = {}     # 跨份共享：模型只在第一份时真加载
+
+        if takes <= 1:
+            wav, sr, status, level, pp_stats = core.synthesize(
+                p, _prog_cb(jid, 0.04, 0.90, "", prog_state))
+            # 生成耗时：合成记录和结果卡显示的是同一个数（之前记录里根本没有这项，
+            # 结果卡的耗时是前端掐的，两边对不上）
+            took = round(time.time() - t_synth, 2)
+            if level == "error":
+                _job_set(jid, state="error", message=status, progress=1.0)
+                history_mod.add({**p, "status": "error", "file": "", "duration": 0, "took": took})
+                return
+
+            _job_set(jid, message="正在写入音频…", progress=0.92)
+            fname = core.save_wav(wav, sr, tag)
+            dur = round(len(wav) / sr, 2) if sr else 0.0
+            head = status.splitlines()[0] if status else ""
+            # 后处理统计跟着记录一起存：事后回看「这条为什么比上次短 1 秒」
+            # 只能靠它，结果卡上那行小字是不会留在记录里的。
+            history_mod.add({**p, "status": level, "file": fname, "duration": dur,
+                             "took": took, "postprocess": pp_stats})
+
+            _job_set(
+                jid, state="done", progress=1.0,
+                message=status,
+                result={
+                    "file": fname, "url": f"/media/out/{fname}",
+                    "duration": dur, "level": level,
+                    "took": took,            # 与合成记录同一个数
+                    "headline": head,
+                    "postprocess": pp_stats,
+                },
+            )
             return
 
-        _job_set(jid, message="正在写入音频…", progress=0.92)
-        tag = {"clone": "clone", "design": "design", "official": "official",
-               "script": "script"}.get(p.get("mode", "clone"), "audio")
-        fname = core.save_wav(wav, sr, tag)
-        dur = round(len(wav) / sr, 2) if sr else 0.0
-        head = status.splitlines()[0] if status else ""
-        # 后处理统计跟着记录一起存：事后回看「这条为什么比上次短 1 秒」
-        # 只能靠它，结果卡上那行小字是不会留在记录里的。
-        history_mod.add({**p, "status": level, "file": fname, "duration": dur,
-                         "took": took, "postprocess": pp_stats})
+        # --- n > 1：逐份候选 ---
+        # 候选写进 web/_cand/<jid>/，**不写合成记录**：一次 n=3 的生成在用户心里
+        # 只是「一次」生成，三条记录会把记录列表刷满，还会让「最新一条」
+        # 变成随机的那一份。选了哪条，哪条才转正并落记录。
+        cand_dir = cfg.CAND_DIR / jid
+        cands: list[dict] = []
+        for i in range(takes):
+            lo = 0.04 + (0.86 * i / takes)
+            hi = 0.04 + (0.86 * (i + 1) / takes)
+            wav, sr, status, level, pp_stats = core.synthesize(
+                p, _prog_cb(jid, lo, hi, f"第 {i + 1}/{takes} 份 · ", prog_state))
+            if level == "error":
+                # 任何一份失败都整单作废（不只是第一份）。给一组「缺了一份的候选」
+                # 比给一个明确错误更糟 —— 用户会盯着「怎么只有 2 份」发愣，
+                # 而且少的可能正好是他想要的那一版。已经跑出来的几份一起丢掉。
+                shutil.rmtree(cand_dir, ignore_errors=True)
+                took = round(time.time() - t_synth, 2)
+                _job_set(jid, state="error", message=status, progress=1.0)
+                history_mod.add({**p, "status": "error", "file": "", "duration": 0,
+                                 "took": took, "takes": takes})
+                return
+            name = core.save_candidate(wav, sr, i + 1, cand_dir)
+            cands.append({
+                "index": i + 1,
+                "file": name,
+                "url": f"/media/cand/{jid}/{name}",
+                "duration": round(len(wav) / sr, 2) if sr else 0.0,
+                "level": level,
+                "postprocess": pp_stats,
+                "note": (status.splitlines()[-1] if len(status.splitlines()) > 1 else ""),
+            })
+            _job_set(jid, message=f"已完成 {len(cands)}/{takes} 份，继续生成下一份…")
 
+        took = round(time.time() - t_synth, 2)
         _job_set(
             jid, state="done", progress=1.0,
-            message=status,
+            message=f"生成了 {len(cands)} 份候选 —— 听过之后挑一条留下，其余自动丢弃。",
             result={
-                "file": fname, "url": f"/media/out/{fname}",
-                "duration": dur, "level": level,
-                "took": took,            # 与合成记录同一个数
-                "headline": head,
-                "postprocess": pp_stats,
+                "candidates": cands,
+                "takes": takes,
+                "level": "ok" if all(c["level"] == "ok" for c in cands) else "warn",
+                "took": took,
             },
         )
     except Exception as e:  # noqa: BLE001
@@ -580,6 +684,58 @@ def api_job_status(jid: str):
     if not job:
         return _err("任务不存在或已过期。", 404)
     return {"ok": True, **job}
+
+
+@app.post("/api/out/promote")
+async def api_out_promote(payload: dict):
+    """把多份候选里挑中的那一条转正。
+
+    **只有这一步会写合成记录**：候选本身不是产物，是草稿。一次 n=3 的生成
+    如果在记录里留下三条，用户回看时根本分不清哪条是自己最后留下的那条。
+    转正 = 改名进 outputs/ + 写一条记录 + 其余候选连临时目录一起删掉。
+    """
+    jid = (payload.get("job") or "").strip()
+    try:
+        idx = int(payload.get("index") or 0)
+    except (TypeError, ValueError):
+        idx = 0
+
+    job = _JOBS.get(jid) or {}
+    res = job.get("result") or {}
+    cands = res.get("candidates") or []
+    if not jid or not cands:
+        return _err("这个任务没有待挑选的候选（可能已经挑过了，或服务已重启）。")
+    if not (1 <= idx <= len(cands)):
+        return _err(f"候选序号超出范围（1–{len(cands)}）。")
+
+    cand = cands[idx - 1]
+    src = cfg.CAND_DIR / _safe(jid) / _safe(cand["file"])
+    if not src.exists():
+        return _err("候选文件已经不在磁盘上了，请重新生成。")
+
+    p = _JOB_ARGS.get(jid) or {}
+    try:
+        fname = core.promote_wav(src, _TAG.get((p.get("mode") or "clone").lower(), "audio"))
+    except Exception as e:  # noqa: BLE001
+        return _err(f"转正失败：{e}")
+
+    dur = float(cand.get("duration") or 0)
+    took = float(res.get("took") or 0)
+    level = cand.get("level") or "ok"
+    pp = cand.get("postprocess")
+    history_mod.add({**p, "status": level, "file": fname, "duration": dur,
+                     "took": took, "postprocess": pp,
+                     "takes": len(cands), "pick": idx})
+
+    # 其余候选一起清掉；顺便把「这份任务已经挑过」写回去，
+    # 连点两次「选这条」不会转出两个文件。
+    shutil.rmtree(cfg.CAND_DIR / _safe(jid), ignore_errors=True)
+    _JOB_ARGS.pop(jid, None)
+    _job_set(jid, result={**res, "candidates": [], "picked": idx})
+
+    return _ok(file=fname, url=f"/media/out/{fname}", duration=dur,
+               level=level, took=took, postprocess=pp, pick=idx, takes=len(cands),
+               message=f"已采用第 {idx} 份（其余 {len(cands) - 1} 份已丢弃）")
 
 
 # ---------------------------------------------------------------------------
@@ -765,6 +921,15 @@ def media_upload(name: str):
     return FileResponse(str(p))
 
 
+@app.get("/media/cand/{jid}/{name}")
+def media_cand(jid: str, name: str):
+    """候选音频。只在「还没挑选」的那段时间有效 —— 转正后整个目录会被删掉。"""
+    p = cfg.CAND_DIR / _safe(jid) / _safe(name)
+    if not p.exists():
+        raise HTTPException(404, "候选文件不存在（可能已挑选或服务已重启）")
+    return FileResponse(str(p), media_type="audio/wav")
+
+
 @app.get("/media/voice/{name}")
 def media_voice(name: str):
     p = voices_mod.path_of(_safe(name), voices_mod.WAV_EXT)
@@ -865,6 +1030,23 @@ def _preload_async() -> None:
     threading.Thread(target=_preload_weights, name="preload", daemon=True).start()
 
 
+def _sweep_candidates() -> None:
+    """启动时清掉上回留下的候选目录。
+
+    候选能不能被挑选，全靠内存里的 ``_JOBS``；进程一重启，那些 job id 就没了，
+    磁盘上剩下的 wav 再没人认领，只会一直占地方。所以**整目录**清掉，
+    不做「留几天」的仁慈 —— 留着也点不开。
+    """
+    try:
+        for d in cfg.CAND_DIR.iterdir():
+            if d.is_dir():
+                shutil.rmtree(d, ignore_errors=True)
+            else:
+                d.unlink(missing_ok=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"  [警告] 清理候选目录失败：{e}")
+
+
 def main() -> int:
     try:
         sys.stdout.reconfigure(errors="replace")
@@ -894,6 +1076,7 @@ def main() -> int:
     print("=" * 66)
 
     _preload_async()
+    _sweep_candidates()
     uvicorn.run(app, host=cfg.HOST, port=cfg.PORT, log_level="warning")
     return 0
 

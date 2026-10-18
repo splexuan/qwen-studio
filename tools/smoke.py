@@ -171,8 +171,18 @@ def main() -> int:
           f"缺 {sorted(need - set(names))}" if need - set(names) else "")
     # 基因状态同理：只查这 6 个。新建的音色可能正处在「后台任务还没跑完」
     # 的状态，或者用户主动用了 prompt=false，都不该算失败。
+    #
+    # **这里不能再断言「6 个基因都在」** —— 基因是**可选缓存**，不是音色的组成部分
+    # （README「音色基因」一节写得很清楚），而且裁剪参考音频时会**自动删除**
+    # （旧编码对不上新音频了）。也就是说：一次完全正常的使用就能让这条断言永远失败。
+    # 实际也发生过：旁白裁剪过音频，基因没了，于是这条红了很久。
+    # 所以改成「参考音频必须在」（那才是音色的本体），基因只作为信息打出来。
     missing = [v["name"] for v in vs["voices"] if v["name"] in need and not v["has_prompt"]]
-    check("  · 迁移音色的基因都在", not missing, "、".join(missing))
+    no_audio = [v["name"] for v in vs["voices"]
+                if v["name"] in need and not v.get("duration")]
+    check("  · 迁移音色的参考音频都在", not no_audio, "、".join(no_audio))
+    print(f"  --    基因覆盖：{len(need) - len(missing)}/{len(need)}"
+          + (f"（缺 {'、'.join(missing)}，可点「生成音色基因」补）" if missing else ""))
     # 写回**真值**而不是空串：既验证了接口，又不会短暂清空这条音色的参考文本
     #（服务与用户自己的实例共用同一份 voices 数据文件，中途被打断就真丢了）。
     st, _, tx = call("POST", "/api/voices/%s/text" % urllib.parse.quote("御姐"),
@@ -232,9 +242,9 @@ def main() -> int:
               f"{time.time() - t0:.1f}s · {stt.get('message', '')[:40]}")
 
     # 保存音色时应当**自动**排一个基因任务，且 prompt=false 能关掉。
-    # 这里故意**不传 ref_text** —— 「只上传音频、没填参考文本」是完全合法的
-    # 用法（默认的仅向量模式不需要它），但内核在 x_vector_only_mode=False
-    # 且 ref_text 为空时会抛 ValueError。这一段就是钉住这个坑。
+    # 注意：参考文本现在是**必填**项（完整 ICL 没有它根本不能用，入口就会拒），
+    # 所以这里不传 ref_text 是靠「另存为」从源音色继承来的 —— 音频一模一样，
+    # 它说的字自然也一模一样，没必要让用户重抄一遍。
     # 临时音色用完即删，别留在用户库里。
     tmp_a, tmp_b = "__冒烟_自动基因", "__冒烟_不排基因"
     call("POST", "/api/voices/delete", {"names": [tmp_a, tmp_b]})
@@ -244,7 +254,9 @@ def main() -> int:
               r.get("error") or str(r.get("job")))
         _, _, vs_a = call("GET", "/api/voices")
         rt_a = next((v.get("ref_text") for v in vs_a["voices"] if v["name"] == tmp_a), "")
-        check("  该音色没有参考文本（确实走到了「空 ref_text」路径）", not rt_a, repr(rt_a))
+        # 以前这里断言「参考文本为空」，那是 ref_text 还非必填时的旧契约。
+        # 现在正的断言是：另存为**继承**了源音色的参考文本。
+        check("  另存为继承了源音色的参考文本", bool(rt_a), repr(rt_a))
         if r.get("job"):
             t0 = time.time()
             while time.time() - t0 < 300:
@@ -358,15 +370,19 @@ def main() -> int:
         history_mod._PATH = tmp_path
         short_text = "短" * 300
         history_mod.add({"text": short_text, "mode": "clone"})
-        long_text = "长" * 5000
+        # 取比上限还长的正文：克隆页现在不限字数，一份两万字的稿子只留前 2000
+        # 就找不回原文了。上限本身用常量（别再写死一个数字，改常量时这里会静默假通过）。
+        long_text = "长" * (history_mod._TEXT_MAX + 2000)
         rec = history_mod.add({"text": long_text, "mode": "clone"})
         got_short = history_mod.list_all()[1]["text"]
         got_long = history_mod.list_all()[0]["text"]
         # 以前这里截到 200 字：列表里两行看不太出来，但「悬停看原文」弹出来的
         # 就是那 200 字 —— 用户会以为功能没做完。
         check("  300 字原样存下（没被截成预览）", got_short == short_text, f"{len(got_short)} 字")
-        check("  5000 字截到防爆上限 2000", got_long == long_text[:2000], f"{len(got_long)} 字")
-        check("  chars 记的是真实字数，与截断无关", rec.get("chars") == 5000, str(rec.get("chars")))
+        check(f"  {history_mod._TEXT_MAX + 2000} 字截到防爆上限 {history_mod._TEXT_MAX}",
+              got_long == long_text[:history_mod._TEXT_MAX], f"{len(got_long)} 字")
+        check("  chars 记的是真实字数，与截断无关",
+              rec.get("chars") == len(long_text), str(rec.get("chars")))
     finally:
         history_mod._PATH = real_path
         try:

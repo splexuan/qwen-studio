@@ -130,10 +130,17 @@ const MEDIA_PROBE = () => {
   const pauseMarks = await marks();
   console.log(`[4] 暂停后：prog=${t2.prog.toFixed(2)}%，媒体事件=${pauseMarks.join(",")}`);
   ok("暂停确实调了 pause", pauseMarks[pauseMarks.length - 1] === "pause");
-  // 基准是**暂停前那一瞬**的 t1b，不是更早的 t1 —— 中间为了量速率又放过 1.2s，
-  // 拿 t1 比会把「正常播放推进的量」误判成「暂停后还在走」。
-  ok("暂停后进度原地保留（不清零、也不再走）",
-     Math.abs(t2.prog - t1b.prog) < 1, `${t1b.prog.toFixed(2)}% → ${t2.prog.toFixed(2)}%`);
+  // 拆成两件事来验，别用「和暂停前那一瞬比」：
+  // 快照 t1b 到 click 真正生效之间，声音本来还在放（浏览器调度 + 这一次点击的往返），
+  // 那段位移是真播放，不是「暂停后还在走」。音频越短，同样的毫秒数占比越大 ——
+  // 用固定 1% 的容差会让这条测试随「最新一条音频有多长」时红时绿。
+  //   ① 不清零：暂停后的位置应该还停在八九不离十的地方（跳回 0 = 清零）
+  //   ② 真的停住：再等 500ms，两次读数必须几乎一样
+  ok("暂停后没有清零", t2.prog > Math.max(1, t1b.prog - 5),
+     `${t1b.prog.toFixed(2)}% → ${t2.prog.toFixed(2)}%`);
+  const t2b = await page.waitForTimeout(500).then(() => snapshot(".hrow .wpl"));
+  ok("暂停后进度不再往前走", Math.abs(t2b.prog - t2.prog) < 0.2,
+     `${t2.prog.toFixed(2)}% → ${t2b.prog.toFixed(2)}%（又等了 0.5 秒）`);
   ok("暂停后播放键变回播放三角", !ICON_PAUSE.test(t2.icon));
 
   // 点波形跳转

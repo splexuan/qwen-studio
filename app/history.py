@@ -32,9 +32,11 @@ _PATH = cfg.OUTPUT_DIR / "history.json"
 _LOCK = threading.Lock()
 # 正文按**全文**存，这里只是一道防爆上限。
 # 早先是 200 字：列表里看不出问题（本来就只显示两行），但「鼠标经过看原文」
-# 弹出来的就是这 200 字 —— 用户会认为功能没做完。2000 与单次生成的文本上限
-# （limits.max_text_chars）对齐，正常一次生成必定存全。
-_TEXT_MAX = 2000
+# 弹出来的就是这 200 字 —— 用户会认为功能没做完。
+# 后来对齐到 2000（= limits.max_text_chars），但克隆页现在**不限字数**了，
+# 一份两万字的长稿如果只留前 2000，事后想找回原文就没戏了。
+# 8000 是折中：够装下绝大多数长稿，300 条全打满也只 2.4 MB。
+_TEXT_MAX = 8000
 
 
 def _read() -> list[dict]:
@@ -81,6 +83,11 @@ def add(entry: dict) -> dict:
         # 没有它，「这条为什么比上次短 1.2 秒」事后根本查不出来 ——
         # 参数区显示的是「开没开」，这里记的是「实际动了多少」，不是一回事。
         "postprocess": entry.get("postprocess"),
+        # 多份候选：这条记录是「n 份里挑的第 index 份」。
+        # 存下来是因为「同样的参数跑三遍，最后留下的是最后那份」事后看结果卡是看不出来的
+        # —— 结果卡只描述被选中的那一条。
+        "takes": entry.get("takes"),
+        "pick": entry.get("pick"),
         "status": entry.get("status", "ok"),
     }
     with _LOCK:
@@ -129,3 +136,26 @@ def find(rec_id: str) -> Optional[dict]:
         if it.get("id") == rec_id:
             return it
     return None
+
+
+def chars_per_sec(default: float = cfg.CHARS_PER_SEC) -> float:
+    """从历史记录反推「这段文字念出来有多长」，给长文本预估用。
+
+    用**中位数**而不是「总字数 / 总时长」：后者会被几条长稿一把盖住，
+    而用户真正要估的往往正是短句那种密度（短句里停顿占比高，反而更慢）。
+
+    样本太少（< 5 条）时返回兜底常量 —— 这时估出来的数还不如一个经验值准。
+    """
+    with _LOCK:
+        items = _read()
+    rates = []
+    for it in items:
+        dur = float(it.get("duration") or 0)
+        chars = int(it.get("chars") or 0)
+        # 0.5 秒以下的多半是失败的碎片，会把中位数往天上拉
+        if dur > 0.5 and chars >= 8:
+            rates.append(chars / dur)
+    if len(rates) < 5:
+        return default
+    rates.sort()
+    return round(rates[len(rates) // 2], 2)

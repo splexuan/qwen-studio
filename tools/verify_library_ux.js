@@ -96,8 +96,13 @@ const RID_SHORT = "verify_ux_short";
   if (!lib.voices?.length) { console.log("音色库是空的，无法验证"); process.exit(1); }
   const src = lib.voices[0].name;
   await jpost("/api/voices/delete", { names: [V1, V2, V3] });
-  const a = await jpost("/api/voices", { name: V1, voice: src, xvec_only: true, prompt: false });
-  const b = await jpost("/api/voices", { name: V2, voice: src, xvec_only: false, prompt: false });
+  // 参考文本现在是**必填**项（完整 ICL 没它根本用不了，入口就会拒）。
+  // 「另存为」只在源音色自己有 ref_text 时才继承；这里源音色可能是空文本，
+  // 所以显式给一段 —— 否则建不出临时音色，整个脚本挂在准备阶段。
+  const a = await jpost("/api/voices",
+    { name: V1, voice: src, ref_text: "验证用参考文本", xvec_only: true, prompt: false });
+  const b = await jpost("/api/voices",
+    { name: V2, voice: src, ref_text: "验证用参考文本", xvec_only: false, prompt: false });
   if (a.name !== V1 || b.name !== V2) {
     console.log("临时音色没建起来：" + JSON.stringify([a, b]));
     process.exit(1);
@@ -121,20 +126,30 @@ const RID_SHORT = "verify_ux_short";
     await page.waitForSelector(".vitem", { timeout: 15000 });
     console.log("[1] 音色名的颜色");
     const col = await page.evaluate(() => {
-      const probe = document.createElement("span");
-      probe.style.color = "var(--accent)";
-      document.body.appendChild(probe);
-      const accent = getComputedStyle(probe).color;
-      probe.remove();
+      // 取两个令牌的实测值来对：正文色（名字该用的）和弱化色（参考文本该用的）。
+      // 原来这里比的是 --accent，但强调色后来被收紧成**只给色块和图标**用 ——
+      // 它对白底只有约 4.5:1，14px 汉字正文看着发虚，所以名字改用 --text + 700 字重。
+      // 这条断言要守住的是「名字比参考文本显眼」，不是「名字必须是紫色」。
+      const probe = (v) => {
+        const s = document.createElement("span");
+        s.style.color = `var(${v})`;
+        document.body.appendChild(s);
+        const c = getComputedStyle(s).color;
+        s.remove();
+        return c;
+      };
+      const text = probe("--text"), weak = probe("--text-3");
       const nm = document.querySelector(".vitem__name");
       const rf = document.querySelector(".vitem__ref");
       return {
         name: nm ? getComputedStyle(nm).color : "",
-        accent,
+        text, weak,
+        weight: nm ? getComputedStyle(nm).fontWeight : "",
         ref: rf ? getComputedStyle(rf).color : "",
       };
     });
-    ok("音色名是强调色", col.name === col.accent, `${col.name} vs accent ${col.accent}`);
+    ok("音色名用正文色（不是灰）", col.name === col.text, `${col.name} vs --text ${col.text}`);
+    ok("音色名是粗体", Number(col.weight) >= 700, col.weight);
     ok("名字和参考文本的灰不同色", col.name !== col.ref, `${col.name} vs ${col.ref}`);
 
     // ======================= 2. 模糊搜索 =======================
@@ -342,6 +357,10 @@ const RID_SHORT = "verify_ux_short";
     await page.click("#c-tab-up");    // 「存进音色库」在临时上传那一栏里，默认那栏是收起的
     await page.setInputFiles("#c-file", WAV);
     await page.waitForFunction(() => !document.querySelector("#c-save").disabled, null, { timeout: 60000 });
+    // 参考文本是**必填**项（默认走完整 ICL，没它保存会被入口直接拒）。
+    // 不填的话第一次保存就只弹一句红字，根本走不到「撞名确认框」那一步 ——
+    // 而这一节要测的正是撞名流程，所以先给一段占位文本。
+    await page.fill("#c-ref-text", "验证用参考文本");
     ok("参考音频就绪、保存按钮可用", true);
 
     const saveAs = async (name) => {
@@ -473,7 +492,15 @@ const RID_SHORT = "verify_ux_short";
   } finally {
     // ---- 收尾：临时记录原样放回，临时音色删掉 ----
     try { fs.writeFileSync(HIST, histOrig, "utf8"); } catch (_) {}
-    try { await jpost("/api/voices/delete", { names: [V1, V2, V3] }); } catch (_) {}
+    // 删三次、每次隔一小会儿：Windows 上文件被占着就删不掉
+    //（页面上刚试听过某个音色时，/media/voice 的 FileResponse 还开着那个 wav），
+    // 一次删不掉会让「临时音色没清干净」变成随机红 —— 不是代码坏了，是文件锁。
+    for (let i = 0; i < 3; i++) {
+      try { await jpost("/api/voices/delete", { names: [V1, V2, V3] }); } catch (_) {}
+      const l = (await jget("/api/voices")).voices.map((v) => v.name);
+      if (!l.some((n) => [V1, V2, V3].includes(n))) break;
+      await page.waitForTimeout(600);
+    }
     const left = (await jget("/api/voices")).voices.map((v) => v.name);
     const ghost = left.filter((n) => [V1, V2, V3].includes(n) || n.startsWith(V1 + "_"));
     console.log("[5] 已还原 history.json、删掉临时音色");

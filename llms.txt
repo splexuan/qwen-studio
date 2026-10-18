@@ -64,6 +64,22 @@ runtime\python\python.exe tools\qwen.py say --mode script --text - < 剧本.txt
 到 `state` 为 `done` 或 `error` → `done` 时音频在 `result.file`（相对 `outputs/`），
 `result.url` 可直接播放。生成是阻塞的 GPU 计算，**轮询间隔 1 秒就够，别高频打**。
 
+**文本次数不用自己切。** clone / official / script 三个模式内部按句切段（`split_text`），
+多长都能提交；唯一的上限是 `MAX_AUDIO_SECONDS`（4 小时音频，内存保护）。
+只有 `mode=design` 仍然限 2000 字 —— 它每段都是一把新嗓子，切了会串味。
+
+## 2.1 一次要几份候选
+
+`POST /api/jobs` 带 `n`（1–4）就一次跑 n 遍同样参数。这时 `result` **没有** `file`，
+而是 `candidates: [{index, file, url, duration, level}, …]`，音频在 `/media/cand/<job>/<i>.wav`。
+
+挑中之后必须再调一次 `POST /api/out/promote {"job": "...", "index": 2}`：
+它把那份改名进 `outputs/`、**写一条合成记录**（带 `takes` / `pick`），其余候选连目录一起删掉。
+不挑就永远没有记录 —— 候选是草稿，不是产物。
+
+`n>1` 不能流式（`/api/tts/stream` 返回 409 + `fallback`）。
+服务重启会清空 `web/_cand/`，所以「提交 → 隔很久再挑」跨重启是拿不到的。
+
 ## 3. 会炸的地方（按踩坑频率排序）
 
 | 坑 | 现象 | 怎么办 |
@@ -76,6 +92,8 @@ runtime\python\python.exe tools\qwen.py say --mode script --text - < 剧本.txt
 | **显存紧张时 RTF 会假崩** | 同段文本 RTF 从 0.8 跳到 3.4（与长度无关） | 报性能数据前先看 `nvidia-smi` 空闲显存；< 1 GB 时不要下结论 |
 | **波峰因子异常高（20–24 dB）** | 归一化被几个孤立尖峰卡住，响度抬不到位 | 已用软限幅处理（尖峰占比 <2% 时只压尖峰）。别自行为此调大目标响度 |
 | **本机 http_proxy 会代理 loopback** | curl 卡住、urllib 报 502 | 一律 `curl --noproxy '*'`；Python 用空 `ProxyHandler`（`tools/qwen.py` 已内置） |
+| **多份候选不自动进记录** | 跑完 `n=3` 却找不到生成的音频 | 候选在 `web/_cand/`，必须 `POST /api/out/promote` 挑一份才落 `outputs/` 并写记录 |
+| **进度字段可能不存在** | 轮询拿不到 `pieces`/`piece` | 那是长文本逐段生成时才有的；单段任务只有 `progress`。缺了就按 `progress` 画，别报错 |
 
 ## 4. 产物在哪
 
@@ -85,6 +103,7 @@ runtime\python\python.exe tools\qwen.py say --mode script --text - < 剧本.txt
 | `voices/` | 音色库：参考 `wav` + 参考文本 `txt` + 元数据 `json` + 加速缓存 `pt` |
 | `web/_uploads/` | 界面上传的临时参考音频 |
 | `web/_preview/` | 官方说话人试听样例（生成一次后复用） |
+| `web/_cand/` | 多份候选的临时落盘（`<job>/1.wav`…）；挑中一份才进 `outputs/`，重启即清空 |
 | `models/` | 5 套权重，缺了跑不起来（`status` 会报） |
 
 ## 5. 不要做
@@ -108,4 +127,5 @@ runtime\python\python.exe tools\qwen.py say --mode script --text - < 剧本.txt
 ```bat
 runtime\python\python.exe tools\smoke.py             :: 全接口 + 真实生成（会加载权重）
 runtime\python\python.exe tools\verify_postproc.py   :: 后处理 DSP，毫秒级
+runtime\python\python.exe tools\verify_takes.py      :: 切段 / 进度 / 原子落盘 / 候选转正，不加载权重
 ```
