@@ -27,6 +27,30 @@ Qwen3-TTS（千问语音合成）的本地工作台：**语音克隆 / 声音设
 
 ---
 
+## 命令行与 AI 上手
+
+界面之外还有一层薄 CLI（`tools/qwen.py`），人和 AI 共用，不重复实现任何能力 ——
+它只是把「组请求 → 轮询 → 把结果说清楚」收成四条子命令：
+
+```bat
+runtime\python\python.exe tools\qwen.py                    :: 探活：服务 / 权重 / 驻留模型
+runtime\python\python.exe tools\qwen.py voices             :: 有哪些音色（* = 已有基因）
+runtime\python\python.exe tools\qwen.py say "今天天气不错。" --voice 御姐
+runtime\python\python.exe tools\qwen.py say --mode script --text - < 剧本.txt
+```
+
+`--json` 让 stdout 只输出一行 JSON（进度全在 stderr），所以能直接管道；退出码 0/1。
+
+**`llms.txt` 是一份写给 AI 的操作手册**：先探活、再读 `/api/docs`、常用命令、
+8 条「会炸的地方」（显存只容一套权重、音色名唯一 409、`xvec_only` 是每音色属性、
+流式不支持剧本……）、产物在哪、哪些事不要做。它跟着整合包一起发出去 ——
+所以别人把 AI 接上来时，不用先读一遍代码。
+
+> 为什么不把接口清单写进这份手册：`GET /api/docs` 已经是**唯一权威**（还会和真实注册
+> 路由对账），再抄一份必然分叉。手册只写文档里没有的东西 —— **顺序和禁忌**。
+
+---
+
 ## 目录结构
 
 ```

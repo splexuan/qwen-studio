@@ -1,0 +1,111 @@
+# Qwen3-TTS Studio
+
+> 本地离线的语音合成工作台（Qwen3-TTS）。五种权重、四种生成方式，产出 wav 到 `outputs/`。
+> 全部在本机跑，不联网、不上传。下面这份文件是给 AI / 脚本看的操作说明。
+
+**读完前两节就能干活**，其余细节一律以服务自己吐的文档为准，本文不复制接口清单。
+
+## 0. 先探活
+
+```bat
+runtime\python\python.exe tools\qwen.py
+```
+
+打印服务地址、权重齐不齐、当前驻留哪套模型。**连不上 = 服务没起**，让人双击
+`启动程序.bat`（或 `启动程序-局域网.bat`）。默认端口 `7867`，要指到别处就用环境变量：
+
+- cmd：`set QWENSTUDIO_PORT=7877`
+- bash：`QWENSTUDIO_PORT=7877 python tools/qwen.py`
+- PowerShell：`$env:QWENSTUDIO_PORT="7877"`
+- 整个地址也能给：`QWENSTUDIO_BASE=http://127.0.0.1:7877`（优先于端口）
+
+## 1. 接口文档只有一个来源
+
+```bash
+curl --noproxy '*' http://127.0.0.1:7867/api/docs
+```
+
+返回全部接口、参数说明和**可直接跑的 curl 示例**（`endpoints` / `examples` / `audit`）。
+`/api` 页面就是它渲染的。要什么字段去这里查，不要凭记忆猜，也不要相信别处的副本。
+
+## 2. 常用动作（优先用 CLI，别手拼 curl）
+
+下面的命令都从**项目根目录**执行。`runtime\python\python.exe` 是随包的便携解释器 ——
+一律用它，别简写成 `qwen.py`：目标机器上未必装了 Python，装了也可能版本/依赖对不上，
+而这个运行时是自带的。
+
+```bat
+:: 探活 / 看有哪些音色可挑 / 看官方说话人 / 看历史
+runtime\python\python.exe tools\qwen.py
+runtime\python\python.exe tools\qwen.py voices
+runtime\python\python.exe tools\qwen.py speakers
+runtime\python\python.exe tools\qwen.py record --limit 5
+
+:: 克隆（音色库里已有的嗓子）
+runtime\python\python.exe tools\qwen.py say "今天天气不错。" --voice 御姐
+
+:: 官方说话人 + 情感指令
+runtime\python\python.exe tools\qwen.py say "你终于来了。" --speaker vivian --instruct "轻快一点，尾音上扬"
+
+:: 声音设计（用文字捏一把新嗓子）
+runtime\python\python.exe tools\qwen.py say "先说第一句台词。" --design "三十岁女声，偏低，语速稳"
+
+:: 剧本（多角色）。每行 [角色名] 台词，或 [角色名][情感指令] 台词；
+:: 角色名必须是音色库里已有的（script 模式）或官方说话人（official 模式）
+runtime\python\python.exe tools\qwen.py say --mode script --text - < 剧本.txt
+```
+
+**长文本一律走 `--text -` 从 stdin 读**：命令行参数会被 shell 和编码折腾（尤其中文 + 换行）。
+
+所有子命令都支持 `--json`：stdout 只输出一行 JSON，进度一律在 stderr —— 可以直接管道。
+退出码 `0` 成功、`1` 失败，失败原因在 stderr 与 `--json` 的 `error` 字段里。
+
+不带 CLI 时走 HTTP 的三步式：`POST /api/jobs` 拿 `job` → 轮询 `GET /api/jobs/{id}`
+到 `state` 为 `done` 或 `error` → `done` 时音频在 `result.file`（相对 `outputs/`），
+`result.url` 可直接播放。生成是阻塞的 GPU 计算，**轮询间隔 1 秒就够，别高频打**。
+
+## 3. 会炸的地方（按踩坑频率排序）
+
+| 坑 | 现象 | 怎么办 |
+|---|---|---|
+| **6 GB 显存只装得下一套权重** | 切换功能/规格时 OOM | 同一时刻只驻留一套；`POST /api/model/unload` 或换规格时它自己先卸 |
+| **音色名唯一** | 保存同名音色返回 `409 {"code":"name_exists"}` | 这**不是**失败：先问是否覆盖，覆盖要显式传 `overwrite=true`（旧基因会一并删除） |
+| **`xvec_only` 是「每音色」属性** | 全改一遍后个别音色的设置被反向覆盖 | 它存在 `voices/*.json` 里，界面显示在四处；改之前先读那个音色的值 |
+| **流式只支持 clone / official 单人** | 剧本、声音设计、多人对话返回 `409 {"fallback":true}` | 这**不是**错误，应安静地改走 `/api/jobs` |
+| **流式不做输出后处理** | `postprocess.skipped == "stream"` | 边生成边播出去的音频已经听到了，事后剪静音会让「下载的」≠「刚听到的」；要处理后版本走 `/api/jobs` |
+| **显存紧张时 RTF 会假崩** | 同段文本 RTF 从 0.8 跳到 3.4（与长度无关） | 报性能数据前先看 `nvidia-smi` 空闲显存；< 1 GB 时不要下结论 |
+| **波峰因子异常高（20–24 dB）** | 归一化被几个孤立尖峰卡住，响度抬不到位 | 已用软限幅处理（尖峰占比 <2% 时只压尖峰）。别自行为此调大目标响度 |
+| **本机 http_proxy 会代理 loopback** | curl 卡住、urllib 报 502 | 一律 `curl --noproxy '*'`；Python 用空 `ProxyHandler`（`tools/qwen.py` 已内置） |
+
+## 4. 产物在哪
+
+| 路径 | 内容 |
+|---|---|
+| `outputs/` | 生成的 wav（**唯一的音频本体**）+ `history.json`（只记参数，不存副本） |
+| `voices/` | 音色库：参考 `wav` + 参考文本 `txt` + 元数据 `json` + 加速缓存 `pt` |
+| `web/_uploads/` | 界面上传的临时参考音频 |
+| `web/_preview/` | 官方说话人试听样例（生成一次后复用） |
+| `models/` | 5 套权重，缺了跑不起来（`status` 会报） |
+
+## 5. 不要做
+
+- **不要杀正在生成的服务进程**：这一单直接作废，且下次启动要重新加载权重 + 预热
+  CUDA graph（十几到几十秒）。要停服务就等它空着。
+- **不要并行提交生成任务**：会排队等 GPU 锁，且 6 GB 显存装不下两套权重。
+- **不要直接改 `voices/*.json`**：走 `POST /api/voices/{name}/...` 系列接口，否则基因缓存会与音频不一致。
+- **不要断言音色库/记录的精确条数**：那是用户可增可删的集合，断言"这些都在"而不是"只有这些"。
+- **不要拿「有没有某个字段」当契约**：老版本服务没有 `postprocess` 等新字段，缺了就跳过，别报错。
+
+## 6. 要改代码的话
+
+`app/` 只放能力（模型调度、音色库、后处理），**不含任何界面代码**；
+`web/server.py` 是唯一的路由层；`web/static/index.html` 是单文件前端，零依赖零构建。
+接口增删必须同步 `web/api_docs.py` 的 `ENDPOINTS` —— `/api/docs` 会拿它和真实注册路由对账，
+不一致会直接报出来。
+
+验证：
+
+```bat
+runtime\python\python.exe tools\smoke.py             :: 全接口 + 真实生成（会加载权重）
+runtime\python\python.exe tools\verify_postproc.py   :: 后处理 DSP，毫秒级
+```

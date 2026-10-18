@@ -8,7 +8,7 @@
     vendor/     ffmpeg 与加速推理内核（都在 config.py 里按相对路径注入）
     runtime/    便携 Python（含 torch，8 G）
     models/     5 套权重（18 G，可用 --no-models 剔掉）
-    启动程序.bat / 自检.bat / README.md / 操作教程.md
+    启动程序.bat / 自检.bat / README.md / 操作教程.md / llms.txt
 
 **绝不带出去的**（这是个人的使用痕迹，不是软件的一部分）：
     voices/     自己录/存下来的音色
@@ -45,8 +45,10 @@ ROOT = Path(__file__).resolve().parent.parent
 TOP_DIRS = ["app", "web", "vendor", "runtime", "models", "tools"]
 
 # 顶层单个文件，缺了也能跑，但没有说明文档对方会一脸茫然
+# llms.txt 是给 AI/脚本看的操作说明（怎么探活、CLI 怎么调、哪里会炸），
+# 跟着包一起发，拿到包的人不管是自己用还是把 AI 接上去，都不用先翻代码。
 TOP_FILES = ["启动程序.bat", "启动程序-局域网.bat", "自检.bat", "打包整合包.bat", "更新代码.bat",
-             "README.md", "操作教程.md"]
+             "README.md", "操作教程.md", "llms.txt"]
 
 # 内容一律不带、但**目录要建出来**的：第一次启动时程序自己也会建，
 # 建出来是为了让对方解压后一眼看到「音色放这儿、结果出这儿」。
@@ -59,6 +61,8 @@ SKIP_DIR_NAMES = {
     ".git",
     "dist",           # 自己的产物
     "_ab",            # tools 下的 A/B 实验音频
+    "_bench",         # tools 下的基准脚本产物（wav / json）
+    "_book",          # tools 下的一次性任务目录：脚本是临时的，正文还是个人创作
     ".venv",
 }
 
