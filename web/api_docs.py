@@ -108,17 +108,45 @@ ENDPOINTS: list[dict] = [
     },
     {
         "method": "POST", "path": "/api/script/preview", "group": "剧本",
-        "desc": "剧本实时预览：解析 + 校验 + 统计。**不加载模型**，所以界面能做到边打字边提示。",
+        "desc": "剧本实时预览：解析 + 校验 + 统计 + 角色表（cast）+ 场景。"
+                "**不加载模型**，所以界面能做到边打字边提示。除台词外还识别"
+                "`//` 注释、`>`（或整行圆括号）动作、行首 `#` 禁用和场景标题；"
+                "这些行保留在 lines 里但不参与合成。每行带稳定 id（L+源行号）、"
+                "kind（line/scene/comment/action）、scene/scene_title、is_scene、"
+                "ignored、disabled、disabled_role/disabled_body、emotion、chars、"
+                "est_secs；scenes 给出场景标题及所属台词 id；"
+                "stats.cast 汇总每个角色的行数/字数/预计时长/是否已映射到音色，"
+                "stats.missing_voices 列出缺失音色，并有 disabled_lines/"
+                "scene_lines/comment_lines/action_lines 等细分计数。",
         "params": [
             ("text", "str", "剧本全文"),
             ("mode", "str", "script=按音色库校验；official=按官方说话人校验"),
         ],
     },
     {
+        "method": "POST", "path": "/api/script/line/preview", "group": "剧本",
+        "desc": "单句剧本试听：只生成一句，不跑整篇。**需要 GPU**（首次会加载权重），"
+                "返回音频 URL、时长、耗时与角色/源行号。voice 与 speaker 二选一；"
+                "行首禁用标记、场景标题不会影响这条独立试听。",
+        "params": [
+            ("text", "str", "这一句台词正文（不含 [角色] 前缀）"),
+            ("line", "int?", "源行号，仅回传用于前端定位"),
+            ("role", "str?", "可选别名；实际请用 voice 或 speaker"),
+            ("voice", "str?", "音色库名字（与 speaker 二选一）"),
+            ("speaker", "str?", "官方说话人 key（与 voice 二选一）"),
+            ("instruct", "str?", "情感/风格指令（自由文本）"),
+            ("language", "str?", "Auto / Chinese / English / …"),
+            ("size", "str?", "1.7B | 0.6B；auto 用档位默认"),
+            ("xvec_only", "bool?", "仅用说话人向量（voice 模式可覆盖音色默认）"),
+        ],
+    },
+    {
         "method": "POST", "path": "/api/jobs", "group": "合成",
         "desc": "提交合成任务，立即返回 job id。生成是重活，一律走后台线程，前端轮询进度。"
                 "clone / official / script 会按句自动切段（split_text），文本长度**没有硬上限**"
-                "（只有声音设计仍限 max_text_chars —— 它每段都会换成另一把嗓子，不能切）。",
+                "（只有声音设计仍限 max_text_chars —— 它每段都会换成另一把嗓子，不能切）。"
+                "clone / official / script 都接受 gap_secs；剧本里的注释、动作、场景标题"
+                "和 `#` 禁用行会被跳过。",
         "params": [
             ("mode", "str", "clone | design | official | script"),
             ("text", "str", "要合成的文本"),
@@ -131,6 +159,8 @@ ENDPOINTS: list[dict] = [
             ("ref_text", "str?", "参考音频文本；xvec_only=false 时必填"),
             ("xvec_only", "bool?", "仅用说话人向量；false 走完整 ICL，更贴参考韵律"),
             ("speaker", "str?", "mode=official 时的官方说话人 key"),
+            ("gap_secs", "float?", "段间静音秒数，0–10，默认取 defaults.gap_secs；"
+                                     "剧本/多人对话/长文本切段间生效"),
             ("postprocess", "bool?", "false = 整组后处理（去静音/归一化/淡入淡出）全关，默认 true"),
             ("pp_silence", "bool?", "去长静音：句中长停顿压短、首尾裁边，默认 true"),
             ("pp_normalize", "bool?", "音量归一化到 -20 dBFS（有声部分），默认 true"),
@@ -162,7 +192,8 @@ ENDPOINTS: list[dict] = [
         "method": "GET", "path": "/api/jobs/{jid}", "group": "合成",
         "desc": "轮询任务：state ∈ queued/running/done/error；done 时 result 带音频 URL 与时长。"
                 "长文本生成期间还会带 pieces / piece 两个字段（共几段、走到了第几段），"
-                "前端据此画真进度，而不是拿时间硬猜。",
+                "剧本任务还会带 role / line / line_id / scene / current（当前角色、源行号、"
+                "行 id、场景、当前文本片段），前端据此画逐句进度。",
         "params": [("jid", "str", "任务 id")],
     },
     {
@@ -187,6 +218,7 @@ ENDPOINTS: list[dict] = [
             ("ref_upload", "str?", "mode=clone 时用刚上传的临时音频"),
             ("speaker", "str?", "mode=official 时的官方说话人 key"),
             ("chunk_size", "int?", "每块多少 codec 步，默认 8（约 0.67 秒音频）"),
+            ("gap_secs", "float?", "段间静音秒数，默认取 defaults.gap_secs"),
         ],
     },
     {
@@ -296,7 +328,8 @@ EXAMPLES: list[dict] = [
     "mode": "script",
     "language": "Chinese",
     "size": "1.7B",
-    "text": "[你的音色名][压低了声音] 此丹的药力，恐怕不止于此。\\n[另一个音色名] 你是说……"
+    "gap_secs": 0.5,
+    "text": "=== 第一场 ===\\n[你的音色名][压低了声音] 此丹的药力，恐怕不止于此。\\n> 另一个角色抬起头。\\n[另一个音色名] 你是说……\\n# [你的音色名] 这句先不念。"
   }'""",
     },
     {

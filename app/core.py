@@ -235,10 +235,14 @@ def _friendly_error(e: BaseException) -> str:
 # ---------------------------------------------------------------------------
 # 进度回调
 # ---------------------------------------------------------------------------
-def _notify(cb, done: int, total: int, stage: str = "gen") -> None:
+def _notify(
+    cb, done: int, total: int, stage: str = "gen", meta: dict | None = None
+) -> None:
     """把「第几段 / 共几段」报给调用方。
 
     ``stage``：``load`` = 模型还没就绪，``gen`` = 正在逐段生成。
+    ``meta`` 是可选的结构化上下文（角色、源行号、当前片段等）。旧回调
+    仍然只接收 ``(done, total, stage)`` 三个参数；新回调可以声明第四个参数。
 
     进度是**锦上添花**：前端少一帧更新不痛不痒，但回调里抛异常会把
     整次生成带崩（而且是在好不容易跑完某一段之后）。所以这里一律吞掉。
@@ -247,13 +251,25 @@ def _notify(cb, done: int, total: int, stage: str = "gen") -> None:
     if not cb:
         return
     try:
-        cb(int(done), int(total), stage)
+        if meta is None:
+            cb(int(done), int(total), stage)
+        else:
+            try:
+                cb(int(done), int(total), stage, dict(meta))
+            except TypeError:
+                # 兼容只接受三参数的旧回调。不能靠签名探测：装饰器 / 偏函数
+                # 的签名经常不可靠，实际调用一次最稳。
+                cb(int(done), int(total), stage)
     except Exception:  # noqa: BLE001
         pass
 
 
 def _run_pieces(
-    pieces: list[str], gen_one, gap_secs: float, on_progress=None
+    pieces: list[str],
+    gen_one,
+    gap_secs: float,
+    on_progress=None,
+    meta: list[dict] | None = None,
 ) -> tuple[np.ndarray, int]:
     """逐段生成再拼接，边跑边报进度。
 
@@ -263,18 +279,21 @@ def _run_pieces(
 
     ``gen_one(piece, index) -> (wav, sr)``；``index`` 从 0 起，
     调用方用它决定「第一段要不要预热音色基因」（只有第 0 段需要）。
+    ``meta`` 与 ``pieces`` 等长时，每条进度都会带上对应的结构化上下文。
     """
     total = len(pieces)
-    _notify(on_progress, 0, total, "load")
+    load_meta = meta[0] if meta and len(meta) == total else None
+    _notify(on_progress, 0, total, "load", load_meta)
     if total == 1:
         wav, sr = gen_one(pieces[0], 0)
-        _notify(on_progress, 1, 1, "gen")
+        _notify(on_progress, 1, 1, "gen", load_meta)
         return wav, sr
     segs: list[tuple[np.ndarray, int]] = []
     for i, piece in enumerate(pieces):
         wav_i, sr = gen_one(piece, i)
         segs.append((wav_i, sr))
-        _notify(on_progress, i + 1, total, "gen")
+        item_meta = meta[i] if meta and len(meta) == total else None
+        _notify(on_progress, i + 1, total, "gen", item_meta)
     return _join_segments(segs, gap_secs)
 
 
@@ -323,6 +342,7 @@ def _join_segments(segs: list[tuple[np.ndarray, int]], gap_secs: float) -> tuple
     if not segs:
         raise RuntimeError("没有可拼接的音频片段。")
     sr = segs[0][1]
+    gap_secs = _gap_value(gap_secs)
     gap = np.zeros(int(sr * gap_secs), dtype=np.float32) if gap_secs > 0 else None
     parts: list[np.ndarray] = []
     for i, (wav, _sr) in enumerate(segs):
@@ -330,6 +350,23 @@ def _join_segments(segs: list[tuple[np.ndarray, int]], gap_secs: float) -> tuple
             parts.append(gap)
         parts.append(np.asarray(wav, dtype=np.float32))
     return np.concatenate(parts), sr
+
+
+def _gap_value(value, default: float | None = None) -> float:
+    """把外部传入的段间静音收敛成合理秒数。
+
+    非法值退回默认值；负数和过大值直接夹住。这里不报错：段间静音只影响
+    听感，不值得让一整单生成因为一个越界参数失败。
+    """
+    if default is None:
+        default = cfg.SCRIPT_GAP_SECS
+    try:
+        secs = float(value)
+    except (TypeError, ValueError):
+        secs = float(default)
+    if secs != secs:  # NaN
+        secs = float(default)
+    return max(0.0, min(10.0, secs))
 
 
 # ---------------------------------------------------------------------------
@@ -509,7 +546,7 @@ def _is_official_dialog(text: str) -> bool:
 
 def gen_official_text(
     text: str, language: str, speaker: str, instruct: str | None, size: str,
-    on_progress=None,
+    on_progress=None, gap_secs: float | None = None,
 ) -> tuple[np.ndarray, int, str]:
     """官方精品：单人或多人对话。
 
@@ -521,16 +558,30 @@ def gen_official_text(
     不会换嗓子 —— 这和声音设计正相反（那边每段都是新嗓子，绝不能切）。
     分成段之后这个模式也就不再有字数的硬上限。
     """
+    gap = _gap_value(gap_secs)
     is_dialog = _is_official_dialog(text)
     prof = cfg.profile()
 
     if not is_dialog:
         pieces = split_text(text, prof.script_chunk_chars)
+        metas = [
+            {
+                "role": (speaker or "vivian").lower(),
+                "line": None,
+                "line_id": None,
+                "index": i + 1,
+                "total": len(pieces),
+                "text": piece[:80],
+                "mode": "official",
+            }
+            for i, piece in enumerate(pieces)
+        ]
         wav, sr = _run_pieces(
             pieces,
             lambda piece, _i: _gen_official(piece, language, speaker, instruct, size),
-            cfg.SCRIPT_GAP_SECS,
+            gap,
             on_progress,
+            metas,
         )
         return wav, sr, ""
 
@@ -547,26 +598,40 @@ def gen_official_text(
 
     # 先把「一行切成几段」全部算出来，才有分母报进度 ——
     # 边生成边数的话，百分比永远算不出来（分母在最后一刻才确定）。
-    jobs: list[tuple[str, str, str | None]] = []      # (role, piece, instruct)
+    jobs: list[tuple[str, str, str | None, int, str]] = []
     for ln in lines:
-        if not ln["ok"]:
+        if (not ln.get("ok") or ln.get("disabled")
+                or ln.get("is_scene") or ln.get("ignored")):
             continue
         for piece in split_text(ln["content"], prof.script_chunk_chars):
-            jobs.append((ln["role"].lower(), piece, ln["instruct"] or None))
+            jobs.append((
+                ln["role"].lower(), piece, ln.get("instruct") or None,
+                ln.get("index") or 0, ln.get("line_id") or ln.get("id") or "",
+            ))
 
     total = len(jobs)
-    _notify(on_progress, 0, total, "load")
+    first_meta = None
+    if jobs:
+        first_meta = {
+            "role": jobs[0][0], "line": jobs[0][3], "line_id": jobs[0][4],
+            "index": 1, "total": total, "text": jobs[0][1][:80], "mode": "official",
+        }
+    _notify(on_progress, 0, total, "load", first_meta)
     segs: list[tuple[np.ndarray, int]] = []
-    for i, (role, piece, inst) in enumerate(jobs, 1):
+    for i, (role, piece, inst, line_no, line_id) in enumerate(jobs, 1):
         wav, sr = _gen_official(piece, language, role, inst, size)
         segs.append((wav, sr))
-        _notify(on_progress, i, total, "gen")
-    wav, sr = _join_segments(segs, cfg.SCRIPT_GAP_SECS)
+        _notify(on_progress, i, total, "gen", {
+            "role": role, "line": line_no, "line_id": line_id,
+            "index": i, "total": total, "text": piece[:80], "mode": "official",
+        })
+    wav, sr = _join_segments(segs, gap)
     return wav, sr, f"多人对话：{st['ok_lines']} 句 / {st['role_count']} 个角色"
 
 
 def gen_script(
-    script_text: str, language: str, size: str, on_progress=None
+    script_text: str, language: str, size: str, on_progress=None,
+    gap_secs: float | None = None,
 ) -> tuple[np.ndarray, int, str, list[str]]:
     """剧本工坊：用 voices/ 里已登记的音色逐句合成。
 
@@ -581,26 +646,42 @@ def gen_script(
     known = set(voices_mod.list_voices())
     warns = script_mod.validate(lines, known)
     prof = cfg.profile()
+    gap = _gap_value(gap_secs)
 
     # 同上：先把要念的段全部摊平，分母稳定了进度才有意义。
-    jobs: list[tuple[dict, str, str | None, bool]] = []   # (voice, piece, instruct, 首段)
+    jobs: list[tuple[dict, str, str | None, bool, dict]] = []
     used: list[str] = []
     for ln in lines:
-        if not ln["ok"] or ln["role"] not in known:
+        if (not ln.get("ok") or ln.get("disabled")
+                or ln.get("is_scene") or ln.get("ignored")
+                or ln.get("role") not in known):
             continue  # 具体原因已在 warns 里说明
         v = voices_mod.load_voice(ln["role"])
         if v is None:
             continue
         first = True
         for piece in split_text(ln["content"], prof.script_chunk_chars):
-            jobs.append((v, piece, ln["instruct"] or None, first))
+            jobs.append((
+                v, piece, ln.get("instruct") or None, first,
+                {
+                    "role": ln["role"],
+                    "line": ln.get("index"),
+                    "line_id": ln.get("line_id") or ln.get("id"),
+                    "scene": ln.get("scene") or "",
+                    "text": piece[:80],
+                    "mode": "script",
+                },
+            ))
             first = False
         used.append(ln["role"])
 
     total = len(jobs)
-    _notify(on_progress, 0, total, "load")
+    first_meta = None
+    if jobs:
+        first_meta = {**jobs[0][4], "index": 1, "total": total}
+    _notify(on_progress, 0, total, "load", first_meta)
     segs: list[tuple[np.ndarray, int]] = []
-    for i, (v, piece, inst, first) in enumerate(jobs, 1):
+    for i, (v, piece, inst, first, meta) in enumerate(jobs, 1):
         wav, sr = _gen_clone(
             piece,
             language,
@@ -613,19 +694,58 @@ def gen_script(
             v.get("prompt") if first else None,
         )
         segs.append((wav, sr))
-        _notify(on_progress, i, total, "gen")
+        _notify(on_progress, i, total, "gen", {**meta, "index": i, "total": total})
 
     if not segs:
         raise RuntimeError("没有生成任何音频。请检查每行是否都写成 `[角色名] 台词`。")
 
-    wav, sr = _join_segments(segs, cfg.SCRIPT_GAP_SECS)
-    note = f"剧本：{len(segs)} 段 / 角色 {len(set(used))} 个"
+    wav, sr = _join_segments(segs, gap)
+    note = (f"剧本：{len(segs)} 段 / 角色 {len(set(used))} 个"
+            f" / 段间 {gap:.2f}s")
     return wav, sr, note, warns
 
 
 def speaker_preview_path(key: str, size: str) -> Path:
     """试听样例的落盘位置。规格进文件名 —— 1.7B 和 0.6B 是两把嗓子。"""
     return cfg.PREVIEW_DIR / f"{key}__{size}.wav"
+
+
+def preview_script_line(
+    text: str,
+    language: str = "Auto",
+    voice: str | None = None,
+    speaker: str | None = None,
+    instruct: str | None = None,
+    size: str | None = None,
+    xvec_only: bool | None = None,
+) -> tuple[np.ndarray, int]:
+    """生成一句剧本台词，供单句试听接口复用。
+
+    只走一次 ``_gen_clone`` / ``_gen_official``，不切段、不拼整篇；
+    调用方必须自己持有 ``_GPU_LOCK``（与 :func:`synthesize` 的分工一致），
+    这样 server 可以把落盘也放进同一段临界区。
+    """
+    text = (text or "").strip()
+    if not text:
+        raise RuntimeError("请先输入要试听的台词。")
+    size = cfg.resolve_size(size)
+    language = language or "Auto"
+    inst = (instruct or "").strip() or None
+    if voice:
+        v = voices_mod.load_voice(voice)
+        if v is None:
+            raise RuntimeError(f"音色库里没有 [{voice}]。")
+        xv = bool(v.get("xvec_only", cfg.CLONE_XVEC_ONLY)) if xvec_only is None else bool(xvec_only)
+        return _gen_clone(
+            text, language, v["audio_path"], v.get("ref_text", ""),
+            inst, size, xv, v.get("prompt"),
+        )
+    if speaker:
+        key = (speaker or "").lower()
+        if key not in cfg.SPEAKER_NAMES:
+            raise RuntimeError(f"没有这个官方说话人：{speaker}")
+        return _gen_official(text, language, key, inst, size)
+    raise RuntimeError("请提供 voice（音色库名字）或 speaker（官方说话人）。")
 
 
 def build_speaker_preview(key: str, size: str) -> Path:
@@ -694,6 +814,7 @@ def synthesize(p: dict, on_progress=None) -> tuple[np.ndarray, int, str, str, di
     prof = cfg.profile()
     size = cfg.resolve_size(p.get("size"))
     instruct = (p.get("instruct") or "").strip() or None
+    gap = _gap_value(p.get("gap_secs"))
 
     # 同一时刻只允许一次生成：GPU 上并行会互相踩显存
     with _GPU_LOCK:
@@ -707,12 +828,16 @@ def synthesize(p: dict, on_progress=None) -> tuple[np.ndarray, int, str, str, di
             elif mode == "official":
                 wav, sr, extra = gen_official_text(text, language,
                                                    p.get("speaker") or "vivian",
-                                                   instruct, size, on_progress)
+                                                   instruct, size, on_progress, gap)
             elif mode == "script":
-                wav, sr, extra, warns = gen_script(text, language, size, on_progress)
+                wav, sr, extra, warns = gen_script(
+                    text, language, size, on_progress, gap
+                )
                 extra = extra + ("\n" + "\n".join(warns) if warns else "")
             elif mode == "clone":
-                wav, sr, extra = _synth_clone(p, language, instruct, size, on_progress)
+                wav, sr, extra = _synth_clone(
+                    p, language, instruct, size, on_progress, gap
+                )
             else:
                 raise RuntimeError(f"未知的生成模式：{mode}")
         except Exception as e:  # noqa: BLE001
@@ -721,15 +846,19 @@ def synthesize(p: dict, on_progress=None) -> tuple[np.ndarray, int, str, str, di
                 _MGR._unload_locked()
                 try:
                     if mode == "clone":
-                        wav, sr, extra = _synth_clone(p, language, instruct, size, on_progress)
+                        wav, sr, extra = _synth_clone(
+                            p, language, instruct, size, on_progress, gap
+                        )
                     elif mode == "official":
                         wav, sr, extra = gen_official_text(
                             text, language, p.get("speaker") or "vivian", instruct, size,
-                            on_progress)
+                            on_progress, gap)
                     elif mode == "design":
                         raise
                     elif mode == "script":
-                        wav, sr, extra, _ = gen_script(text, language, size, on_progress)
+                        wav, sr, extra, _ = gen_script(
+                            text, language, size, on_progress, gap
+                        )
                     else:
                         raise
                     level = "warn"
@@ -792,7 +921,8 @@ def _resolve_clone_source(p: dict) -> tuple[str, str, bool, Any]:
 
 
 def _synth_clone(
-    p: dict, language: str, instruct: str | None, size: str, on_progress=None
+    p: dict, language: str, instruct: str | None, size: str, on_progress=None,
+    gap_secs: float | None = None,
 ) -> tuple[np.ndarray, int, str]:
     """语音克隆：音色库优先，其次用上传的参考音频。
 
@@ -825,7 +955,21 @@ def _synth_clone(
         return _gen_clone(piece, language, ref_audio, ref_text, instruct,
                           size, xvec_only, warm if i == 0 else None)
 
-    wav, sr = _run_pieces(pieces, gen_one, cfg.SCRIPT_GAP_SECS, on_progress)
+    metas = [
+        {
+            "role": (p.get("voice") or "").strip() or None,
+            "line": None,
+            "line_id": None,
+            "index": i + 1,
+            "total": len(pieces),
+            "text": piece[:80],
+            "mode": "clone",
+        }
+        for i, piece in enumerate(pieces)
+    ]
+    wav, sr = _run_pieces(
+        pieces, gen_one, _gap_value(gap_secs), on_progress, metas
+    )
     if len(pieces) > 1:
         extra += f"（长文本自动切为 {len(pieces)} 段）"
     return wav, sr, extra
@@ -904,7 +1048,8 @@ def synthesize_stream(p: dict):
     instruct = (p.get("instruct") or "").strip() or None
     chunk_size = max(1, int(p.get("chunk_size") or STREAM_CHUNK_SIZE))
     prof = cfg.profile()
-    gate = np.zeros(int(STREAM_SAMPLE_RATE * cfg.SCRIPT_GAP_SECS), dtype=np.float32)
+    gap = _gap_value(p.get("gap_secs"))
+    gate = np.zeros(int(STREAM_SAMPLE_RATE * gap), dtype=np.float32)
 
     with _GPU_LOCK:
         t0 = time.time()

@@ -25,6 +25,7 @@ DOM 结构上反复与你抢控制权（哈希类名随版本变、注入的 CSS
     POST /api/voices/{name}/prompt         生成音色基因（.pt）
     POST /api/voices/delete                批量删除
     POST /api/script/preview               剧本实时预览（纯解析，不加载模型）
+    POST /api/script/line/preview          单句剧本试听（需要 GPU）
     POST /api/jobs       GET /api/jobs/{id}  提交合成任务 / 轮询进度
     POST /api/speakers/{name}/preview      官方说话人试听（缓存命中直接给 URL，否则排队生成）
     GET  /api/history                      合成记录
@@ -464,10 +465,71 @@ async def api_script_preview(payload: dict):
     mode = (payload.get("mode") or "script").lower()
     known = voices_mod.list_voices() if mode == "script" else cfg.SPEAKER_NAMES
     try:
-        return _ok(**script_mod.preview(text, known),
-                   roles=script_mod.all_roles(script_mod.parse(text)))
+        cps = history_mod.chars_per_sec()
+        return _ok(**script_mod.preview(text, known, cps))
     except Exception as e:  # noqa: BLE001
         return _err(str(e))
+
+
+@app.post("/api/script/line/preview")
+async def api_script_line_preview(payload: dict):
+    """单句剧本试听：只生成一句，不跑整篇。
+
+    这是 GPU 操作（会加载 Base / CustomVoice 权重），所以和普通合成共用
+    ``core._GPU_LOCK``；落盘放进同一段临界区，避免「刚生成完就被另一路
+    生成挤掉缓存」这种难以复现的抖动。响应里带 url 与 duration，前端可以
+    直接喂给 ``<audio>``。
+    """
+    text = (payload.get("text") or "").strip()
+    if not text:
+        return _err("请先输入要试听的台词。")
+
+    voice = (payload.get("voice") or "").strip() or None
+    speaker = (payload.get("speaker") or "").strip().lower() or None
+    if not voice and not speaker:
+        return _err("请提供 voice（音色库名字）或 speaker（官方说话人）。")
+    if voice and speaker:
+        return _err("voice 与 speaker 只能二选一。")
+
+    language = payload.get("language") or "Auto"
+    size = cfg.resolve_size(payload.get("size"))
+    instruct = (payload.get("instruct") or "").strip() or None
+    line = payload.get("line")
+    try:
+        line_no = int(line) if line is not None and str(line).strip() else None
+    except (TypeError, ValueError):
+        line_no = None
+
+    try:
+        with core._GPU_LOCK:
+            t0 = time.time()
+            wav, sr = core.preview_script_line(
+                text=text,
+                language=language,
+                voice=voice,
+                speaker=speaker,
+                instruct=instruct,
+                size=size,
+                xvec_only=payload.get("xvec_only"),
+            )
+            fname = core.save_wav(wav, sr, "script_line")
+        dur = round(len(wav) / sr, 2) if sr else 0.0
+        took = round(time.time() - t0, 2)
+    except Exception as e:  # noqa: BLE001
+        return _err(f"单句试听失败：{e}")
+
+    return _ok(
+        url=f"/media/out/{fname}",
+        file=fname,
+        duration=dur,
+        took=took,
+        role=voice or speaker,
+        line=line_no,
+        chars=len(text),
+        size=size,
+        language=language,
+        gpu=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -507,16 +569,32 @@ def _prog_cb(jid: str, lo: float, hi: float):
     区间由这里给：core 只知道「这一段生成完了」，不知道这一单从开跑到收尾
     还有多少 —— 线性映射只做一次，百分比的口径就全在一处，前端不用关心是实现细节。
     """
-    def cb(done: int, total: int, stage: str = "gen") -> None:
+    def cb(done: int, total: int, stage: str = "gen",
+           meta: dict | None = None) -> None:
         frac = (done / total) if total else 0.0
+        role = (meta or {}).get("role")
+        line = (meta or {}).get("line")
         if stage == "load":
             msg = "正在准备模型…"
         elif total <= 1:
             msg = "正在生成音频…"
+        elif role and line:
+            msg = f"第 {done}/{total} 段 · {role} · 源行 {line}"
+        elif role:
+            msg = f"第 {done}/{total} 段 · {role}"
         else:
             msg = f"第 {done}/{total} 段"
+        extra = {}
+        if meta:
+            extra = {
+                "role": meta.get("role"),
+                "line": meta.get("line"),
+                "line_id": meta.get("line_id"),
+                "scene": meta.get("scene"),
+                "current": meta.get("text"),
+            }
         _job_set(jid, progress=round(lo + (hi - lo) * frac, 3), message=msg,
-                 pieces=int(total), piece=int(done))
+                 pieces=int(total), piece=int(done), **extra)
     return cb
 
 
@@ -543,6 +621,7 @@ def _run_job(jid: str, kind: str, p: dict) -> None:
         # 这里先归一化成「实际生效的值」，synthesize 拿到的输入完全等价。
         p["language"] = p.get("language") or "Auto"
         p["size"] = cfg.resolve_size(p.get("size"))
+        p["gap_secs"] = core._gap_value(p.get("gap_secs"))
 
         _job_set(jid, state="running", progress=0.02,
                  message="正在准备模型 —— 首次使用该规格要加载权重并预热 CUDA graph，"

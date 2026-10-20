@@ -390,6 +390,7 @@ html[data-theme="dark"] .vitem{border-color:var(--line)}
    这跟上面那句共用同一个数字，改行高时两处一起改。 */
 .hl-line{min-height:1.8em; border-radius:4px}
 .hl-line.is-bad{background:var(--err-soft); box-shadow:inset 2px 0 0 var(--err)}
+.hl-line.is-meta{color:var(--text-3); font-style:italic}
 /* 加粗用 700 而不是 650：中文得落在**真实的 Bold 字面**上（雅黑 Bold / 苹方 Semibold）。
    650 这类中间值有可能落到合成粗体（把笔画描粗一圈），反而糊。
    字体栈是 var(--f)，里面明确列了中文字体，所以 700 拿得到真 Bold。 */
@@ -872,6 +873,157 @@ html[data-theme="dark"] .btn--danger:hover{color:var(--bg)}
 .sline.bad .sline__c{color:var(--err-ink)}
 .sline__n{flex:0 0 auto; font-size:var(--fs-xs); color:var(--text-3); min-width:1.8em; text-align:right}
 
+/* ============================ 剧本工坊工作台 ============================
+   角色表、逐句结构、移动端分段都只服务剧本页，统一挂 s- 前缀，
+   不碰公共卡片 / 结果卡 / 记录列表。 */
+.s-tabs{display:none}
+.s-cast,.s-outline{display:flex; flex-direction:column; gap:var(--s-2)}
+.s-section{display:flex; align-items:center; gap:var(--s-2); min-width:0}
+.s-section__t{font-size:var(--fs-sm); font-weight:650; color:var(--text)}
+.s-section__m{margin-left:auto; font-size:var(--fs-xs); color:var(--text-3);
+  font-variant-numeric:tabular-nums}
+.s-cast__list{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--s-2)}
+.s-cast__item{min-width:0; display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-2);
+  padding:var(--s-2) var(--s-3); border:1px solid var(--line); border-radius:var(--r-sm);
+  background:var(--surface-2)}
+.s-cast__dot{flex:0 0 auto; width:8px; height:8px; border-radius:50%;
+  background:var(--role-c,var(--accent))}
+.s-cast__main{min-width:0; flex:1 1 auto}
+.s-cast__name{display:block; font-size:var(--fs-sm); font-weight:650; color:var(--text);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.s-cast__meta{display:block; margin-top:1px; font-size:var(--fs-xs); color:var(--text-3);
+  font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.s-cast__act{flex:0 0 auto; display:flex; gap:4px}
+.s-cast__player{flex:1 1 100%}
+.s-cast__player:empty{display:none}
+.s-cast__player > *{margin-top:var(--s-1)}
+.s-mini{appearance:none; border:1px solid var(--line); background:var(--surface);
+  color:var(--text-2); border-radius:var(--r-xs); min-height:28px; padding:0 7px;
+  font:inherit; font-size:var(--fs-xs); font-weight:600; cursor:pointer; white-space:nowrap}
+.s-mini:hover{border-color:var(--accent-line); color:var(--accent)}
+.s-mini:disabled{color:var(--text-3); cursor:not-allowed; background:var(--surface-3)}
+.s-line__acts .s-mini:disabled{max-width:7.4em; overflow:hidden; text-overflow:ellipsis}
+.s-cast__item.is-missing{border-color:var(--err-line); background:var(--err-soft)}
+.s-cast__item.is-missing .s-cast__dot{background:var(--err)}
+.s-outline{border:1px solid var(--line); border-radius:var(--r); overflow:hidden;
+  max-height:300px; overflow-y:auto; background:var(--surface)}
+.s-line{display:grid; grid-template-columns:2.2em minmax(0,1fr) auto; gap:var(--s-2);
+  align-items:start; padding:var(--s-2) var(--s-2) var(--s-2) var(--s-3);
+  border-bottom:1px solid var(--line); cursor:pointer; outline:none;
+  transition:background .14s, box-shadow .14s, opacity .14s}
+.s-line:last-child{border-bottom:0}
+.s-line:hover,.s-line:focus-visible{background:var(--surface-2)}
+.s-line:focus-visible{box-shadow:inset 2px 0 0 var(--accent)}
+.s-line__n{font-size:var(--fs-xs); color:var(--text-3); text-align:right;
+  font-variant-numeric:tabular-nums; padding-top:2px}
+.s-line__main{min-width:0}
+.s-line__head{display:flex; align-items:baseline; gap:var(--s-2); flex-wrap:wrap}
+.s-line__role{font-size:var(--fs-sm); font-weight:700; color:var(--role-c,var(--ink-role))}
+.s-line__inst{font-size:var(--fs-xs); font-weight:600; color:var(--ink-inst)}
+.s-line__text{display:block; margin-top:1px; font-size:var(--fs-sm); line-height:1.65;
+  color:var(--text-2); overflow-wrap:anywhere}
+.s-line__acts{display:flex; gap:3px; opacity:0; transition:opacity .14s}
+.s-line:hover .s-line__acts,.s-line:focus-within .s-line__acts{opacity:1}
+.s-line.is-bad{background:var(--err-soft)}
+.s-line.is-bad .s-line__text{color:var(--err-ink)}
+.s-line.is-off{opacity:.56}
+.s-line.is-off .s-line__text{text-decoration:line-through; text-decoration-thickness:1px}
+.s-line.is-off .s-line__role{color:var(--text-3)}
+.s-line.is-scene{grid-template-columns:2.2em minmax(0,1fr); cursor:default;
+  background:var(--surface-2); border-left:3px solid var(--accent)}
+.s-line.is-scene .s-line__text{font-weight:650; color:var(--text)}
+.s-line.is-ignored{background:var(--surface-2)}
+.s-line.is-ignored .s-line__text{color:var(--text-3); font-style:italic}
+.s-line.is-active{background:var(--accent-soft); box-shadow:inset 3px 0 0 var(--accent)}
+.s-line.is-active .s-line__n{color:var(--accent); font-weight:700}
+.s-line__tag{font-size:var(--fs-xs); font-weight:600; color:var(--text-3);
+  border:1px solid var(--line); border-radius:var(--r-full); padding:0 6px}
+.s-empty{padding:var(--s-4); text-align:center; color:var(--text-3); font-size:var(--fs-sm);
+  line-height:1.7}
+.s-footnote{margin:0; font-size:var(--fs-xs); color:var(--text-3); line-height:1.6}
+.s-shortcut{font-family:var(--mono); font-size:var(--fs-xs); color:var(--text-3)}
+.s-line__slot{grid-column:2 / -1; min-width:0}
+.s-line__slot:empty{display:none}
+.s-line.is-busy .s-line__text{opacity:.6}
+.s-param{display:flex; flex-direction:column; gap:var(--s-2)}
+.s-param + .s-param{margin-top:var(--s-4)}
+.s-param__row{display:flex; align-items:center; gap:var(--s-2); flex-wrap:wrap}
+.s-param__row .input{width:88px; height:34px}
+.s-param__row .hint{flex:1 1 220px}
+.s-snaps{display:flex; flex-direction:column; gap:var(--s-2)}
+.s-snap{display:flex; align-items:center; gap:var(--s-2); padding:var(--s-2) var(--s-3);
+  border:1px solid var(--line); border-radius:var(--r-sm); background:var(--surface-2)}
+.s-snap__t{min-width:0; flex:1; font-size:var(--fs-sm); font-weight:600;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.s-snap__m{font-size:var(--fs-xs); color:var(--text-3)}
+.s-export{display:flex; gap:var(--s-2); flex-wrap:wrap}
+.s-readings{display:flex; flex-direction:column; gap:var(--s-2)}
+.s-reading,.s-reading-add{display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr) auto;
+  align-items:center; gap:var(--s-2)}
+.s-reading .input,.s-reading-add .input{height:34px; min-width:0}
+.s-reading__arrow{font-family:var(--mono); font-size:var(--fs-xs); color:var(--text-3)}
+.s-ac{position:absolute; z-index:30; width:min(280px,calc(100% - 24px));
+  display:flex; flex-direction:column; gap:2px; padding:4px;
+  border:1px solid var(--line-2); border-radius:var(--r-sm);
+  background:var(--surface); box-shadow:var(--sh-2)}
+.s-ac__item{appearance:none; border:0; border-radius:5px; background:transparent;
+  padding:7px 9px; text-align:left; cursor:pointer; color:var(--text);
+  font-size:var(--fs-sm); font-weight:600}
+.s-ac__item:hover,.s-ac__item.is-on{background:var(--accent-soft); color:var(--ink-role)}
+.s-timeline{display:flex; flex-direction:column; gap:var(--s-2); margin-top:var(--s-3)}
+.s-track{display:grid; grid-template-columns:5.5em minmax(0,1fr); align-items:center; gap:var(--s-2)}
+.s-track__r{font-size:var(--fs-xs); font-weight:650; color:var(--role-c,var(--ink-role));
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.s-track__bar{position:relative; display:flex; min-height:22px; overflow:hidden;
+  border-radius:var(--r-xs); background:var(--surface-3)}
+.s-track__seg{height:22px; min-width:2px; border-right:1px solid var(--surface);
+  background:color-mix(in srgb,var(--role-c,var(--accent)) 30%,var(--surface-2));
+  transition:filter .14s}
+.s-track__seg:hover{filter:brightness(.93)}
+.s-timeline__legend{margin:0; font-size:var(--fs-xs); color:var(--text-3)}
+@keyframes s-line-in{from{opacity:0; transform:translateY(3px)}to{opacity:1; transform:none}}
+.s-line.is-new{animation:s-line-in .2s ease both}
+@keyframes s-seg-in{from{opacity:0; transform:scaleX(.35); transform-origin:left}to{opacity:1; transform:none}}
+.s-track__seg{animation:s-seg-in .28s ease both}
+
+/* 手机端把「剧本 / 角色 / 参数」拆成三页。桌面仍然沿用原来的双栏 grid：
+   三块 DOM 原地保留，只在小屏改变可见性，不复制表单也不挪 id。 */
+@media (max-width:720px){
+  #view-script .s-tabs{display:flex; position:sticky; top:var(--topbar-h); z-index:20;
+    margin:0 0 var(--s-3); padding:3px; border-radius:var(--r-sm);
+    background:color-mix(in srgb,var(--surface) 92%,transparent);
+    box-shadow:inset 0 0 0 1px var(--line),var(--sh-1);
+    backdrop-filter:blur(10px)}
+  #view-script .s-tab{flex:1 1 0; min-width:0; height:42px; appearance:none; border:0;
+    border-radius:7px; background:transparent; color:var(--text-2);
+    font-size:var(--fs-sm); font-weight:650; cursor:pointer}
+  #view-script .s-tab.is-on{background:var(--surface); color:var(--text); box-shadow:var(--sh-1)}
+  #view-script .s-tab:focus-visible{outline:2px solid var(--accent); outline-offset:1px}
+  #view-script .s-pane{display:none !important}
+  #view-script .s-pane.is-on{display:flex !important; flex-direction:column; gap:var(--s-3)}
+  #view-script .s-pane > .card{display:block}
+  #view-script .s-pane[data-pane="script"] .s-outline{max-height:260px}
+  #view-script .s-cast__list{grid-template-columns:1fr}
+  #view-script .s-line__acts{opacity:1}
+  #view-script .s-line{padding-top:10px; padding-bottom:10px}
+  #view-script .s-track{grid-template-columns:4.8em minmax(0,1fr)}
+  #view-script .codebox__ta{min-height:300px; font-size:var(--fs-lg)}
+  /* 生成按钮是结果卡的页脚，但剧本 / 角色页也要够得到它。
+     只露出吸底按钮，结果卡本体仍然留在「参数」页。 */
+  #view-script #s-rail.s-pane{display:block !important}
+  #view-script #s-rail.s-pane:not(.is-on) > #s-result > .card > *:not(.card__foot){
+    display:none !important}
+  #view-script #s-rail.s-pane:not(.is-on) > #s-result > .card{
+    background:transparent; box-shadow:none; border:0}
+  #view-script #s-rail{padding-bottom:calc(82px + env(safe-area-inset-bottom))}
+  #view-script .s-mobile-hint{display:block}
+}
+.s-mobile-hint{display:none}
+@media (prefers-reduced-motion:reduce){
+  .s-line.is-new{animation:none}
+  .s-track__seg{transition:none}
+}
+
 /* ============================ 合成记录 ============================ */
 .hlist{display:flex; flex-direction:column; gap:var(--s-6)}
 .hgroup__t{display:flex; align-items:center; gap:var(--s-2); margin:0 0 var(--s-2);
@@ -890,12 +1042,31 @@ html[data-theme="dark"] .btn--danger:hover{color:var(--bg)}
 .hrow__meta{display:flex; align-items:center; gap:var(--s-2) var(--s-4); flex-wrap:wrap;
   margin-top:var(--s-2); font-size:var(--fs-xs); color:var(--text-2)}
 .hrow__meta span{white-space:nowrap}
-.hrow__text{margin:var(--s-2) 0 0; font-size:var(--fs-base); line-height:1.65;
-  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden}
+.hrow__text{margin:var(--s-2) 0 0; padding:0; font:inherit; font-size:var(--fs-base);
+  line-height:1.65; color:var(--text-2);
+  width:100%; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+  overflow:hidden; text-align:left; cursor:pointer; border:0; border-radius:var(--r-xs);
+  background:transparent; appearance:none; -webkit-appearance:none}
+.hrow__text:hover{color:var(--text); background:var(--surface-2)}
+.hrow__text:focus-visible{outline:2px solid var(--accent); outline-offset:3px}
 .hrow.err .hrow__text{color:var(--err-ink)}
 .hrow__acts{display:flex; align-items:center; gap:var(--s-2); flex-wrap:wrap; margin-top:var(--s-3)}
 .hrow__slot{margin-top:var(--s-3)}
 .hrow__slot:empty{display:none}
+
+/* 合成记录详情：长文必须能持久阅读、选择和复制，不能只靠鼠标悬停。
+   正文单独放进可滚动区域；弹窗打开后页面滚动被 <dialog> 的模态层挡住，
+   滚轮只会滚这里的正文。 */
+.histdetail__text{
+  margin:0; padding:var(--s-4); height:min(52vh, 520px); overflow:auto;
+  white-space:pre-wrap; overflow-wrap:anywhere; user-select:text; cursor:text;
+  overscroll-behavior:contain;
+  border:1px solid var(--line); border-radius:var(--r-sm);
+  background:var(--surface-2); color:var(--text-2);
+  font:inherit; font-size:var(--fs-sm); line-height:1.75;
+}
+.histdetail__meta{margin:0 0 var(--s-3); color:var(--text-3);
+  font-size:var(--fs-xs); line-height:1.6}
 .empty{padding:52px var(--s-6); text-align:center; color:var(--text-3); font-size:var(--fs-sm); line-height:1.9}
 .empty b{display:block; font-size:var(--fs-md); color:var(--text-2); font-weight:650; margin-bottom:var(--s-2)}
 .empty code{font-family:var(--mono); font-size:var(--fs-xs)}
@@ -987,20 +1158,21 @@ html[data-theme="dark"] .btn--danger:hover{color:var(--bg)}
 /* 悬停看全文的浮层（合成记录的正文被截成两行，原文得有个地方弹出来）。
    不用 title 属性：它有一秒延迟、长文本换行难看、样式也改不了。
    不能就地撑开列表 —— 列表一跳，鼠标底下那一行就换了，反而永远看不到想看的那条。
+   浮层只是短预览；真正要阅读、选择和复制时，点正文打开持久详情。
+   浮层本身仍可移入，内部也能滚动，方便临时扫一眼。
    z-index 压在所有浮层之下（遮罩 90 / 抽屉 100 / toast 200），
    弹窗是 <dialog> 走顶层，不受影响。 */
 .tip{
-  position:fixed; z-index:80; max-width:min(680px, 58vw); max-height:80vh; overflow:hidden;
+  position:fixed; z-index:80; max-width:min(680px, 58vw); max-height:80vh; overflow:auto;
   background:var(--surface); color:var(--text-2);
   border:1px solid var(--line-2); border-left:3px solid var(--accent);
   border-radius:var(--r-sm); box-shadow:var(--sh-3); padding:var(--s-3) var(--s-4);
   font-size:var(--fs-sm); line-height:1.68; white-space:pre-line; overflow-wrap:anywhere;
   opacity:0; visibility:hidden; transition:opacity .13s, visibility .13s;
-  /* **永远不接鼠标事件**。浮层是「看一眼」，不是「一个能点的东西」——
-     唯一的硬要求是它不能把底下的按钮挡住：鼠标一移上去它就收起、按钮就在鼠标底下，
-     那才是真的烦。pointer-events:none 让点击直接穿过去，位置摆在哪都不会挡。
-     代价是它自己不能滚动，所以长文靠缩一档字号去挤（见 .tip.is-long）。 */
-  pointer-events:none;
+  /* 接鼠标事件，才能把鼠标移进来滚动长文；要选中、复制时走持久详情。
+     位置算法会尽量把它放在操作按钮右侧；鼠标进入浮层后由 JS 取消收起。 */
+  pointer-events:auto; cursor:default; user-select:none !important;
+  overscroll-behavior:contain;
 }
 .tip.is-long{font-size:var(--fs-xs); line-height:1.6}
 .tip.is-on{opacity:1; visibility:visible}
@@ -1569,40 +1741,150 @@ a.btn{text-decoration:none}
           </div>
         </header>
 
+        <div class="s-tabs" id="s-tabs" role="tablist" aria-label="剧本工坊分区">
+          <button type="button" class="s-tab is-on" id="s-tab-script" data-s-tab="script" role="tab"
+                  aria-selected="true" aria-controls="s-pane-script">剧本</button>
+          <button type="button" class="s-tab" id="s-tab-cast" data-s-tab="cast" role="tab"
+                  aria-selected="false" aria-controls="s-pane-cast">角色</button>
+          <button type="button" class="s-tab" id="s-tab-params" data-s-tab="params" role="tab"
+                  aria-selected="false" aria-controls="s-pane-params">参数</button>
+        </div>
+
         <div class="grid">
           <div class="stack">
-            <div class="card">
-              <div class="card__head"><span class="stepnum">1</span><h2>剧本</h2>
-                <span class="pill sp" id="s-count">0 行</span></div>
-              <div class="card__body">
-                <div class="codebox" id="s-box">
-                  <div class="codebox__hl" id="s-hl" aria-hidden="true"></div>
-                  <textarea class="codebox__ta" id="s-text" spellcheck="false"
-                    placeholder="[韩立][压低了声音] 此丹的药力，恐怕不止于此。
+            <div class="s-pane is-on" data-s-pane="script" id="s-pane-script"
+                 role="tabpanel" aria-labelledby="s-tab-script">
+              <div class="card">
+                <div class="card__head"><span class="stepnum">1</span><h2>剧本</h2>
+                  <span class="pill sp" id="s-count">0 行</span></div>
+                <div class="card__body">
+                  <div class="codebox" id="s-box">
+                    <div class="codebox__hl" id="s-hl" aria-hidden="true"></div>
+                    <textarea class="codebox__ta" id="s-text" spellcheck="false"
+                      aria-label="剧本正文，每行以方括号角色名开头"
+                      aria-describedby="s-format-hint s-shortcut-hint"
+                      placeholder="[韩立][压低了声音] 此丹的药力，恐怕不止于此。
 [南宫婉] 你是说……
 [韩立] 服下之后，三日内必有异动。"></textarea>
+                  </div>
+                  <div class="row-between mt">
+                    <p class="hint" id="s-format-hint">行首必须是音色库里的音色名，可再跟一个 <code style="font-family:var(--mono)">[情感指令]</code>。行首加 <code style="font-family:var(--mono)">#</code> 禁用、<code style="font-family:var(--mono)">//</code> 注释、<code style="font-family:var(--mono)">&gt;</code> 写动作；场景标题用 <code style="font-family:var(--mono)">=== 第一场 ===</code>。</p>
+                    <div class="row-between">
+                      <button class="btn btn--ghost btn--sm" id="s-sample">填入示例</button>
+                      <button class="btn btn--outline btn--sm" id="s-tidy">一键整理格式</button>
+                    </div>
+                  </div>
+
+                  <div class="row-between mt">
+                    <button class="btn btn--soft btn--sm" id="s-pick">插入角色音色</button>
+                    <span class="hint" id="s-shortcut-hint">在弹窗里挑一个，把 <code style="font-family:var(--mono)">[音色名]</code> 插到光标处；<span class="s-shortcut">Ctrl/Cmd + Enter</span> 合成。</span>
+                  </div>
+
+                  <div class="metrics hidden" id="s-stats"></div>
+                  <div id="s-issues"></div>
                 </div>
-                <div class="row-between mt">
-                  <p class="hint">行首必须是音色库里的音色名，可再跟一个 <code style="font-family:var(--mono)">[情感指令]</code>。</p>
-                  <div class="row-between">
-                    <button class="btn btn--ghost btn--sm" id="s-sample">填入示例</button>
-                    <button class="btn btn--outline btn--sm" id="s-tidy">一键整理格式</button>
+              </div>
+
+              <div class="card">
+                <div class="card__head"><span class="stepnum">2</span><h2>逐句结构</h2>
+                  <span class="pill sp" id="s-outline-count">0 句</span></div>
+                <div class="card__body">
+                  <div class="s-outline" id="s-outline" aria-live="polite">
+                    <div class="s-empty">写下剧本后，这里会按角色和句子列出结构。点击任意一行可回到源文本。</div>
+                  </div>
+                  <p class="s-footnote mt">点击行可定位原文；单句试听只生成这一句，不会重跑整篇。</p>
+                </div>
+              </div>
+
+              <div class="card s-mobile-hint"><div class="card__body">
+                <p class="hint">角色与参数分别在上方「角色」「参数」页签；桌面端保持在右侧栏。</p>
+              </div></div>
+            </div>
+
+            <div class="s-pane" data-s-pane="cast" id="s-pane-cast"
+                 role="tabpanel" aria-labelledby="s-tab-cast">
+              <div class="card">
+                <div class="card__head"><span class="stepnum">3</span><h2>角色表 / 选角板</h2>
+                  <span class="pill sp" id="s-cast-count">0 个角色</span></div>
+                <div class="card__body">
+                  <div class="s-cast">
+                    <div class="s-section">
+                      <span class="s-section__t">本次剧本</span>
+                      <span class="s-section__m" id="s-cast-summary">等待解析</span>
+                    </div>
+                    <div class="s-cast__list" id="s-cast-list">
+                      <div class="s-empty">解析出角色后，这里会显示音色映射、台词数、字数与预计时长。</div>
+                    </div>
+                    <p class="s-footnote" id="s-cast-note">音色映射来自音色库；预计时长按本机实测语速估算。</p>
                   </div>
                 </div>
-
-                <div class="row-between mt">
-                  <button class="btn btn--soft btn--sm" id="s-pick">插入角色音色</button>
-                  <span class="hint">在弹窗里挑一个，把 <code style="font-family:var(--mono)">[音色名]</code> 插到光标处</span>
-                </div>
-
-                <div class="metrics hidden" id="s-stats"></div>
-                <div id="s-issues"></div>
               </div>
             </div>
 
-            <div class="card"><div id="s-adv"></div></div>
+            <div class="s-pane" data-s-pane="params" id="s-pane-params"
+                 role="tabpanel" aria-labelledby="s-tab-params">
+              <div class="card">
+                <div class="card__head"><span class="stepnum">4</span><h2>剧本参数</h2>
+                  <span class="pill sp" id="s-gap-pill">0.40 s</span></div>
+                <div class="card__body">
+                  <div class="s-param">
+                    <div class="s-param__row">
+                      <label class="lbl" for="s-gap">段间静音</label>
+                      <input class="input" id="s-gap" type="number" min="0" max="10" step="0.05"
+                             inputmode="decimal" aria-describedby="s-gap-hint">
+                      <span class="hint">秒</span>
+                    </div>
+                    <p class="hint" id="s-gap-hint">每条台词之间的停顿。0 秒最紧凑；长戏留 0.3–0.8 秒更自然。这个值会写进合成记录。</p>
+                  </div>
+                  <div class="s-param">
+                    <div class="s-section">
+                      <span class="s-section__t">项目快照</span>
+                      <span class="s-section__m">只存在本机浏览器</span>
+                    </div>
+                    <div class="row-between">
+                      <button class="btn btn--outline btn--sm" id="s-snapshot-save">保存当前版本</button>
+                      <button class="btn btn--ghost btn--sm" id="s-snapshot-clear">清空快照</button>
+                    </div>
+                    <div class="s-snaps" id="s-snapshots"></div>
+                  </div>
+                  <div class="s-param">
+                    <div class="s-section">
+                      <span class="s-section__t">读音词典</span>
+                      <span class="s-section__m">只影响合成，不改原稿</span>
+                    </div>
+                    <div class="s-readings" id="s-readings"></div>
+                    <div class="s-reading-add">
+                      <input class="input" id="s-reading-from" placeholder="原词，如 重庆"
+                             aria-label="要替换的原词">
+                      <span class="s-reading__arrow" aria-hidden="true">→</span>
+                      <input class="input" id="s-reading-to" placeholder="读法，如 崇庆"
+                             aria-label="希望模型读出的写法">
+                      <button class="btn btn--outline btn--sm" id="s-reading-add"
+                              type="button">添加</button>
+                    </div>
+                    <p class="hint">按字面、长词优先替换。它只作用于送进模型的台词，
+                      字幕和原稿仍是原文；导出 JSON 会带上生效后的读音规则。</p>
+                  </div>
+                  <div class="s-param">
+                    <div class="s-section">
+                      <span class="s-section__t">导出</span>
+                      <span class="s-section__m">不加载模型</span>
+                    </div>
+                    <div class="s-export">
+                      <button class="btn btn--ghost btn--sm" id="s-export-json">剧本 JSON</button>
+                      <button class="btn btn--ghost btn--sm" id="s-export-srt">字幕 SRT</button>
+                      <button class="btn btn--ghost btn--sm" id="s-export-lrc">歌词 LRC</button>
+                    </div>
+                    <p class="hint">时间轴按本机实测语速估算，用于剪辑对稿；最终以合成后的音频为准。</p>
+                  </div>
+                </div>
+              </div>
+              <div class="card"><div id="s-adv"></div></div>
+            </div>
           </div>
-          <aside class="rail" id="s-rail"></aside>
+
+          <aside class="rail s-pane" data-s-pane="params" id="s-rail"
+                 role="tabpanel" aria-label="生成结果"></aside>
         </div>
       </section>
 
@@ -1871,8 +2153,8 @@ function hideTip() {
 }
 
 /* 留一小段宽限再收起：鼠标贴着那一行的边缘微动时会连着吐出 enter/leave，
-   不留宽限就会出现「刚露面就被自己关掉」的闪。浮层本身不接鼠标事件，
-   所以这段宽限不是用来「移到浮层上」的。 */
+   不留宽限就会出现「刚露面就被自己关掉」的闪。鼠标从正文移到浮层上时，
+   浮层自己的 mouseenter 会取消这次收起，所以宽限也够跨过那 8px 的间隙。 */
 function hideTipSoon() {
   clearTimeout(_tipTimer);
   _tipTimer = setTimeout(hideTip, 160);
@@ -1883,11 +2165,16 @@ function showTip(text, from) {
   if (!_tipEl) {
     _tipEl = document.createElement("div");
     _tipEl.className = "tip";
+    // 鼠标从正文移到浮层上时，先取消正文 mouseleave 安排的收起。
+    // 离开浮层后再按同样的宽限收起。
+    _tipEl.addEventListener("mouseenter", () => clearTimeout(_tipTimer));
+    _tipEl.addEventListener("mouseleave", hideTipSoon);
     document.body.appendChild(_tipEl);
   }
   clearTimeout(_tipTimer);
   _tipEl.textContent = text;
-  // 浮层不接鼠标事件、也不能滚动，长文只能靠缩一档字号挤进一屏。
+  _tipEl.scrollTop = 0;
+  // 长文缩一档字号，尽量一屏放下；放不下时浮层自己可以滚动。
   // 阈值按「大概超过二十行」取 —— 短句缩字号反而显得比正文还小。
   _tipEl.classList.toggle("is-long", text.length > 700);
   _tipEl.classList.add("is-on");
@@ -2639,6 +2926,8 @@ function paintResult(R, d) {
   // 其余模式不给：克隆页自己就有「存进音色库」，官方音色本来就是内置的，
   // 剧本工坊一次生成好几个角色、存成一个音色反而说不清是谁。
   const p = d.params || {};
+  // 剧本结果的时间轴放在参数表下面；paintResult 会重建 innerHTML，所以这里补回去。
+  if (p.mode === "script" && d.url) renderScriptTimeline(R, d);
   const canSave = !!d.url && p.mode === "design" && !!d.file;
   R.acts.classList.toggle("hidden", !canSave);
   R.acts.innerHTML = canSave
@@ -2691,6 +2980,14 @@ function paintRun(R, st, elapsed) {
   R.pct.textContent = pct + "%";
   setGoText(R, `生成中 ${pct}%`);
   R.barfill.style.width = pct + "%";
+  if (st.role || st.line || st.scene) {
+    const bits = [];
+    if (st.scene) bits.push(st.scene);
+    if (st.role) bits.push(st.role);
+    if (st.line) bits.push(`源行 ${st.line}`);
+    if (st.current) bits.push(`“${String(st.current).slice(0, 34)}${String(st.current).length > 34 ? "…" : ""}”`);
+    R.stage.title = bits.join(" · ");
+  }
   // 有真进度就顺带外推一个剩余时间（elapsed/pct 是最朴素的线性外推，够用）
   if (detailed && pct >= 5) {
     const left = (elapsed * (100 - pct)) / pct;
@@ -3458,12 +3755,26 @@ function openModal({ title, body, foot }) {
       ${foot ? `<div class="modal__foot">${foot}</div>` : ""}
     </div>`;
   document.body.appendChild(d);
-  const close = () => { try { d.close(); } catch (_) {} d.remove(); };
+  // close 事件统一收尾：Esc、点遮罩、点 ✕ 都走这里。
+  // 先把节点从 DOM 移除再触发一次 close 不可靠，所以监听器只负责清理；
+  // 调用方拿到的 close() 仍然可重复调用。
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    try { d.close(); } catch (_) {}
+    d.remove();
+  };
   $('[data-role=x]', d).addEventListener("click", close);
   // 显式处理 Esc：焦点落在输入框里时浏览器会把它吃掉，弹窗就关不掉了
   d.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.preventDefault(); close(); } });
   d.addEventListener("click", (e) => { if (e.target === d) close(); });
   d.showModal();
+  // 点遮罩 / 浏览器原生 Esc 可能绕过上面的 keydown；统一在 close 事件里移除节点。
+  d.addEventListener("close", () => {
+    if (!d.isConnected) return;
+    d.remove();
+  });
   return { d, close, $: (s) => $(s, d), $$: (s) => $$(s, d) };
 }
 
@@ -4377,6 +4688,543 @@ let _scriptTimer = 0;
    做法见上面 CSS 那段注释：**叠一层**，不是 contenteditable。
 --------------------------------------------------------------------------- */
 let SCRIPT_BAD = new Set();   // 最近一次解析里「没法解析」的那些行的原文，用来标红
+let SCRIPT_PV = null;         // 最近一次成功解析，角色表和逐句结构共用
+let SCRIPT_SEQ = 0;           // 只认最后一次预览请求，避免快速编辑时旧结果盖新结果
+let SCRIPT_OUTLINE_PV = null; // 结构行对应的解析快照，防止文本变了还按旧 index 改
+let SCRIPT_LINE_SEQ = 0;
+let SCRIPT_LINE_BUSY = null;
+let SCRIPT_LAST_RESULT = null;
+const SCRIPT_LINE_CACHE = new Map();
+const SCRIPT_SNAP_KEY = "qs.script.snapshots";
+const SCRIPT_GAP_KEY = "qs.script.gap";
+const SCRIPT_READINGS_KEY = "qs.script.readings";
+const SCRIPT_SNAP_MAX = 8;
+
+/* 角色色只做区分，不靠颜色传达状态：颜色由固定顺序取现有语义色，
+   缺音色仍然由红底 + “缺音色”文字说明。 */
+const SCRIPT_ROLE_COLORS = [
+  "var(--ink-role)", "var(--info-ink)", "var(--ok-ink)",
+  "var(--warn-ink)", "var(--err-ink)",
+];
+
+function scriptRoleColor(role) {
+  const names = (SCRIPT_PV?.roles || []).slice();
+  const i = names.indexOf(role);
+  return SCRIPT_ROLE_COLORS[(i < 0 ? 0 : i) % SCRIPT_ROLE_COLORS.length];
+}
+
+function scriptEstimate(chars) {
+  const cps = Number(BOOT.limits?.chars_per_sec) || 4.8;
+  return chars ? chars / cps : 0;
+}
+
+function scriptGap() {
+  let raw = localStorage.getItem(SCRIPT_GAP_KEY);
+  if (raw == null) return Number(BOOT.defaults?.gap_secs ?? 0.4);
+  const n = Number(raw);
+  return Number.isFinite(n) ? Math.min(10, Math.max(0, n)) : Number(BOOT.defaults?.gap_secs ?? 0.4);
+}
+
+function saveScriptGap(value) {
+  const n = Number(value);
+  const v = Math.min(10, Math.max(0, Number.isFinite(n) ? n : 0.4));
+  try { localStorage.setItem(SCRIPT_GAP_KEY, String(v)); } catch (_) {}
+  const input = $("#s-gap");
+  if (input) input.value = v.toFixed(2);
+  const pill = $("#s-gap-pill");
+  if (pill) pill.textContent = v.toFixed(2) + " s";
+  return v;
+}
+
+/* 读音词典：左边写原词，右边写希望模型读出的写法。
+   只替换送进 TTS 的正文，源剧本一个字都不改 —— 否则用户改一次读音，
+   台词里就永久多了一串注音括号，下一次再想换读法已经找不到原词了。 */
+function loadScriptReadings() {
+  try {
+    const rows = JSON.parse(localStorage.getItem(SCRIPT_READINGS_KEY) || "[]");
+    return Array.isArray(rows)
+      ? rows.filter((x) => x && String(x.from || "").trim() && String(x.to || "").trim())
+      : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function saveScriptReadings(rows) {
+  const seen = new Set();
+  const clean = [];
+  for (const row of rows || []) {
+    const from = String(row.from || "").trim();
+    const to = String(row.to || "").trim();
+    if (!from || !to || seen.has(from)) continue;
+    seen.add(from);
+    clean.push({ from, to });
+  }
+  try { localStorage.setItem(SCRIPT_READINGS_KEY, JSON.stringify(clean)); }
+  catch (_) { toast("浏览器存储已满，读音词典没有保存", "err"); }
+  return clean;
+}
+
+function applyScriptReadings(text, readings = loadScriptReadings()) {
+  let out = String(text || "");
+  // 长词优先，避免「重」先把「重庆」拆掉。全部按字面替换，不把用户输入当正则。
+  [...readings].sort((a, b) => b.from.length - a.from.length).forEach((r) => {
+    out = out.split(r.from).join(r.to);
+  });
+  return out;
+}
+
+function scriptTTSLine(ln) {
+  return {
+    ...ln,
+    content: applyScriptReadings(ln.content),
+  };
+}
+
+function renderScriptReadings() {
+  const host = $("#s-readings");
+  if (!host) return;
+  const rows = loadScriptReadings();
+  host.innerHTML = rows.length
+    ? rows.map((r, i) => `<div class="s-reading">
+        <input class="input" data-reading-from="${i}" value="${esc(r.from)}"
+               aria-label="原词 ${i + 1}">
+        <span class="s-reading__arrow" aria-hidden="true">→</span>
+        <input class="input" data-reading-to="${i}" value="${esc(r.to)}"
+               aria-label="读法 ${i + 1}">
+        <button type="button" class="s-mini" data-reading-del="${i}"
+                aria-label="删除第 ${i + 1} 条读音">删除</button>
+      </div>`).join("")
+    : `<p class="hint">还没有读音规则。适合处理多音字、英文缩写、数字和专有名词。</p>`;
+
+  const commit = () => {
+    const next = rows.map((_, i) => ({
+      from: host.querySelector(`[data-reading-from="${i}"]`)?.value || "",
+      to: host.querySelector(`[data-reading-to="${i}"]`)?.value || "",
+    }));
+    saveScriptReadings(next);
+  };
+  $$("[data-reading-from], [data-reading-to]", host).forEach((el) => {
+    el.addEventListener("change", () => { commit(); renderScriptReadings(); });
+  });
+  $$("[data-reading-del]", host).forEach((b) => b.addEventListener("click", () => {
+    const next = loadScriptReadings();
+    next.splice(Number(b.dataset.readingDel), 1);
+    saveScriptReadings(next);
+    renderScriptReadings();
+  }));
+}
+
+/* 定位到源文本中的某一行：优先按解析快照里的 raw 找，
+   找不到时退回行号。行号是解析器给的物理行号（空行也计数）。 */
+function focusScriptLine(ln) {
+  const ta = $("#s-text");
+  if (!ta || !ln) return;
+  const src = ta.value.split("\n");
+  let at = -1;
+  if (ln.raw) {
+    at = src.findIndex((l, i) => i + 1 === ln.index && l === ln.raw);
+    if (at < 0) at = src.findIndex((l) => l === ln.raw);
+  }
+  if (at < 0) at = Math.max(0, Math.min(src.length - 1, Number(ln.index || 1) - 1));
+  const start = src.slice(0, at).reduce((n, l) => n + l.length + 1, 0);
+  const end = start + (src[at] || "").length;
+  ta.focus();
+  ta.setSelectionRange(start, end);
+  // 让目标行大致落在编辑区中间；textarea 的原生 scrollIntoView 会滚整页。
+  const lineH = parseFloat(getComputedStyle(ta).lineHeight) || 27;
+  ta.scrollTop = Math.max(0, at * lineH - ta.clientHeight / 2 + lineH);
+  syncScriptHighlight();
+  // 结构行是「读稿导航」，定位后让对应行短暂亮一下；只做视觉提示，
+  // 不参与解析，也不改变 textarea 的选区。
+  const row = $("#s-outline")?.querySelector(`.s-line[data-s-line="${ln.index}"]`);
+  if (row) {
+    $$("#s-outline .s-line.is-active").forEach((x) => x.classList.remove("is-active"));
+    row.classList.add("is-active");
+    clearTimeout(focusScriptLine._timer);
+    focusScriptLine._timer = setTimeout(() => row.classList.remove("is-active"), 1500);
+  }
+}
+
+/* 禁用状态写回源文本：行首加/去一个 #。
+   不能塞进第二个方括号 —— 那里是情感指令，会被原样送给模型。 */
+function toggleScriptLine(ln) {
+  if (!ln || (!ln.ok && !ln.disabled)) return;
+  const ta = $("#s-text");
+  if (!ta) return;
+  const src = ta.value.split("\n");
+  const at = src.findIndex((l, i) => i + 1 === ln.index && l === ln.raw);
+  const idx = at >= 0 ? at : Math.max(0, Math.min(src.length - 1, Number(ln.index || 1) - 1));
+  const raw = src[idx] || "";
+  if (ln.disabled) {
+    src[idx] = raw.replace(/^(\s*)#\s?/, "$1");
+  } else {
+    const m = raw.match(/^(\s*)/);
+    src[idx] = (m ? m[1] : "") + "# " + raw.slice(m ? m[1].length : 0);
+  }
+  ta.value = src.join("\n");
+  _draftWrite();
+  clearTimeout(_scriptTimer);
+  updateScriptPreview();
+}
+
+function scriptLineBusy(ln, on) {
+  if (!ln) return;
+  SCRIPT_LINE_BUSY = on ? ln.index : null;
+  const host = $("#s-outline");
+  const row = host?.querySelector(`.s-line[data-s-line="${ln.index}"]`);
+  row?.classList.toggle("is-busy", on);
+  const btn = host?.querySelector(`[data-s-try="${ln.index}"]`);
+  if (btn) {
+    btn.disabled = on;
+    btn.textContent = on ? "生成中…" : "试听";
+    btn.title = on ? "正在生成这一句" : "只生成这一句，不重跑整篇";
+  }
+}
+
+async function previewScriptLine(ln, btn) {
+  if (!ln || !ln.ok || ln.disabled) return;
+  if (!VOICES.some((v) => v.name === ln.role)) {
+    toast(`「${ln.role}」还没有映射到音色`, "warn");
+    return;
+  }
+  const ttsText = applyScriptReadings(ln.content);
+  const cacheKey = JSON.stringify([
+    ln.role, ttsText, ln.instruct || "", RAILS.s.size(), RAILS.s.lang(),
+  ]);
+  const cached = SCRIPT_LINE_CACHE.get(cacheKey);
+  if (cached) {
+    const slot = $("#s-outline")?.querySelector(
+      `.s-line[data-s-line="${ln.index}"] .s-line__slot`);
+    if (slot) {
+      slot.innerHTML = "";
+      openPlayer(slot, cached.url, cached.file, { download: false });
+    }
+    toast(`第 ${ln.index} 行使用本次会话缓存`, "ok");
+    return;
+  }
+  const seq = ++SCRIPT_LINE_SEQ;
+  scriptLineBusy(ln, true);
+  const slot = $("#s-outline")?.querySelector(`.s-line[data-s-line="${ln.index}"] .s-line__slot`);
+  if (slot) slot.innerHTML = `<p class="hint">正在加载模型并生成这一句，首次可能要十几秒…</p>`;
+  try {
+    const r = await post("/api/script/line/preview", {
+      text: ttsText,
+      line: ln.index,
+      voice: ln.role,
+      instruct: ln.instruct || "",
+      language: RAILS.s.lang(),
+      size: RAILS.s.size(),
+    });
+    if (seq !== SCRIPT_LINE_SEQ) return;
+    SCRIPT_LINE_CACHE.set(cacheKey, { url: r.url, file: r.file || "" });
+    if (!slot) return;
+    slot.innerHTML = "";
+    openPlayer(slot, r.url, r.file || `${ln.role}_L${ln.index}.wav`, { download: false });
+    toast(`第 ${ln.index} 行试听已生成`, "ok");
+  } catch (e) {
+    if (seq !== SCRIPT_LINE_SEQ) return;
+    if (slot) slot.innerHTML = noteHTML(e.message, "error");
+  } finally {
+    if (seq === SCRIPT_LINE_SEQ) scriptLineBusy(ln, false);
+  }
+}
+
+function renderScriptOutline() {
+  const host = $("#s-outline");
+  const pv = SCRIPT_OUTLINE_PV;
+  if (!host) return;
+  const hadFocus = host.contains(document.activeElement);
+  const focusIndex = hadFocus ? document.activeElement?.dataset?.sLine : "";
+  if (!pv || !pv.lines?.length) {
+    $("#s-outline-count").textContent = "0 句";
+    host.innerHTML = `<div class="s-empty">写下剧本后，这里会按角色和句子列出结构。点击任意一行可回到源文本。</div>`;
+    return;
+  }
+  const synthLines = pv.lines.filter((l) => (l.ok || l.disabled) && !l.ignored);
+  $("#s-outline-count").textContent = `${synthLines.length} 句`;
+  const oldTop = host.scrollTop;
+  host.innerHTML = pv.lines.map((ln) => {
+    if (ln.is_scene) {
+      return `<div class="s-line is-scene" data-s-line="${ln.index}" data-s-kind="scene">
+        <span class="s-line__n">${ln.index}</span>
+        <span class="s-line__main">
+          <span class="s-line__head"><span class="s-line__tag">场景</span>
+            <span class="s-line__role">${esc(ln.scene_title || ln.scene || "未命名场景")}</span></span>
+        </span>
+      </div>`;
+    }
+    if (ln.kind === "comment" || ln.kind === "action") {
+      const tag = ln.kind === "comment" ? "注释" : "动作";
+      return `<div class="s-line is-ignored" role="button" tabindex="0"
+           data-s-line="${ln.index}" data-s-kind="${ln.kind}"
+           aria-label="第 ${ln.index} 行，${tag}">
+        <span class="s-line__n">${ln.index}</span>
+        <span class="s-line__main">
+          <span class="s-line__head"><span class="s-line__tag">${tag}</span></span>
+          <span class="s-line__text">${esc(ln.content || ln.raw || "")}</span>
+        </span>
+        <span class="s-line__acts"><button type="button" class="s-mini"
+          data-s-locate="${ln.index}">定位</button></span>
+      </div>`;
+    }
+    const off = !!ln.disabled;
+    const role = ln.role ? esc(ln.role) : "格式待修";
+    const inst = ln.ok && ln.instruct ? `<span class="s-line__inst">[${esc(ln.instruct)}]</span>` : "";
+    const text = ln.ok ? esc(ln.content) : esc(ln.raw || ln.issue || "");
+    const issue = !ln.ok && !off && ln.issue
+      ? `<span class="s-line__inst">${esc(ln.issue)}</span>` : "";
+    const known = VOICES.some((v) => v.name === ln.role);
+    return `<div class="s-line${ln.ok ? "" : " is-bad"}${off ? " is-off" : ""}"
+         role="button" tabindex="0" data-s-line="${ln.index}" data-s-kind="line"
+         aria-label="第 ${ln.index} 行${ln.ok ? `，${esc(ln.role)}` : "，格式有误"}${off ? "，已禁用" : ""}">
+      <span class="s-line__n">${ln.index}</span>
+      <span class="s-line__main">
+        <span class="s-line__head">
+          <span class="s-line__role" style="--role-c:${ln.ok ? scriptRoleColor(ln.role) : "var(--err-ink)"}">${role}</span>
+          ${inst}${issue}${off ? `<span class="s-line__tag">禁用</span>` : ""}
+          ${ln.ok && !off && !known ? `<span class="s-line__tag">缺音色</span>` : ""}
+        </span>
+        <span class="s-line__text">${text}</span>
+      </span>
+      <span class="s-line__acts">
+        <button type="button" class="s-mini" data-s-locate="${ln.index}"
+          aria-label="定位第 ${ln.index} 行">定位</button>
+        ${ln.role ? `<button type="button" class="s-mini" data-s-disable="${ln.index}"
+          aria-label="${off ? "启用" : "禁用"}第 ${ln.index} 行">${off ? "启用" : "禁用"}</button>
+        ${ln.ok ? `<button type="button" class="s-mini" data-s-try="${ln.index}"
+          ${off || !known ? "disabled" : ""}
+          title="${off ? "这一行已禁用" : (!known ? "先映射音色" : "只生成这一句")}">试听</button>` : ""}` : ""}
+      </span>
+      <span class="s-line__slot" data-s-slot="${ln.index}"></span>
+    </div>`;
+  }).join("");
+  host.scrollTop = oldTop;
+  // 输入防抖重画时把焦点留在原来那一行，键盘用户不会被踢回页面顶部。
+  const row = focusIndex ? host.querySelector(`.s-line[data-s-line="${focusIndex}"]`) : null;
+  row?.focus({ preventScroll: true });
+
+  const byIndex = new Map(pv.lines.map((ln) => [String(ln.index), ln]));
+  $$("[data-s-locate]", host).forEach((b) => b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    focusScriptLine(byIndex.get(b.dataset.sLocate));
+  }));
+  $$("[data-s-disable]", host).forEach((b) => b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleScriptLine(byIndex.get(b.dataset.sDisable));
+  }));
+  $$("[data-s-try]", host).forEach((b) => b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    previewScriptLine(byIndex.get(b.dataset.sTry), b);
+  }));
+  $$(".s-line[data-s-line]", host).forEach((row) => {
+    const open = () => {
+      if (row.dataset.sKind !== "scene") focusScriptLine(byIndex.get(row.dataset.sLine));
+    };
+    row.addEventListener("click", open);
+    row.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+      if (e.key === "Escape") { e.preventDefault(); row.blur(); }
+    });
+  });
+}
+
+function renderScriptCast({ keepPlayer = false } = {}) {
+  const host = $("#s-cast-list");
+  if (!host) return;
+  const playingName = keepPlayer
+    ? host.querySelector(".s-cast__player audio")?.closest(".s-cast__item")?.dataset.role
+    : "";
+  $$("[data-s-role-slot]", host).forEach((s) => { try { s._stopAudio?.(); } catch (_) {} });
+  const pv = SCRIPT_PV;
+  if (!pv || !pv.lines?.length) {
+    $("#s-cast-count").textContent = "0 个角色";
+    $("#s-cast-summary").textContent = "等待解析";
+    host.innerHTML = `<div class="s-empty">解析出角色后，这里会显示音色映射、台词数、字数与预计时长。</div>`;
+    return;
+  }
+  const known = new Set(VOICES.map((v) => v.name));
+  const oldTop = host.scrollTop;
+  const byRole = new Map();
+  for (const ln of pv.lines) {
+    if (!ln.ok || ln.disabled || ln.ignored) continue;
+    const row = byRole.get(ln.role) || { name: ln.role, lines: 0, chars: 0 };
+    row.lines += 1;
+    row.chars += (ln.content || "").length;
+    byRole.set(ln.role, row);
+  }
+  const rows = [...byRole.values()];
+  $("#s-cast-count").textContent = `${rows.length} 个角色`;
+  $("#s-cast-summary").textContent = `${rows.length} 角色 · ${pv.stats.ok_lines} 句 · ${fmtSpan(scriptEstimate(pv.stats.chars))}`;
+  host.innerHTML = rows.map((r) => {
+    const missing = !known.has(r.name);
+    const voice = VOICES.find((v) => v.name === r.name);
+    return `<div class="s-cast__item${missing ? " is-missing" : ""}" data-role="${esc(r.name)}">
+      <span class="s-cast__dot" style="--role-c:${scriptRoleColor(r.name)}" aria-hidden="true"></span>
+      <span class="s-cast__main">
+        <span class="s-cast__name">${esc(r.name)}</span>
+        <span class="s-cast__meta">${missing ? "缺音色 · 该行会被跳过" : "已映射"} · ${r.lines} 句 · ${r.chars} 字 · ${fmtSpan(scriptEstimate(r.chars))}${voice?.duration ? ` · 参考 ${fmtDur(voice.duration)}` : ""}</span>
+      </span>
+      <span class="s-cast__act">
+        <button type="button" class="s-mini" data-s-role="${esc(r.name)}">${missing ? "去补音色" : "换音色"}</button>
+        <button type="button" class="s-mini" data-s-role-try="${esc(r.name)}" ${missing || !voice ? "disabled" : ""}>试听</button>
+      </span>
+      <span class="s-cast__player" data-s-role-slot="${esc(r.name)}"></span>
+    </div>`;
+  }).join("");
+  host.scrollTop = oldTop;
+  // 输入防抖触发重画时，如果某个角色的参考音频正在播，别让播放器随着 DOM 一起消失。
+  if (playingName) {
+    const item = $$(".s-cast__item", host).find((x) => x.dataset.role === playingName);
+    const slot = item?.querySelector("[data-s-role-slot]");
+    const v = VOICES.find((x) => x.name === playingName);
+    if (slot && v) openPlayer(slot, voiceURL(v.name), v.name + ".wav", { download: false });
+  }
+
+  $$("[data-s-role]", host).forEach((b) => b.addEventListener("click", async () => {
+    const name = b.dataset.sRole;
+    if (!VOICES.some((v) => v.name === name)) {
+      gotoView("library");
+      return;
+    }
+    const picked = await pickVoice({ title: `为「${name}」选音色`, current: name });
+    if (!picked || picked === name) return;
+    replaceScriptRole(name, picked);
+  }));
+  $$("[data-s-role-try]", host).forEach((b) => b.addEventListener("click", () => {
+    const v = VOICES.find((x) => x.name === b.dataset.sRoleTry);
+    if (!v) return;
+    const item = b.closest(".s-cast__item");
+    const slot = item?.querySelector("[data-s-role-slot]");
+    if (!slot) return;
+    if (slot.dataset.open === "1") { closeSlot(slot); return; }
+    openPlayer(slot, voiceURL(v.name), v.name + ".wav", { download: false });
+  }));
+}
+
+/* 替换角色名只改行首那一个方括号，正文和情绪指令保持原样。
+   这样做比“重新拼一行”安全：行首空白、括号外空格、标点都不会被规整掉。 */
+function replaceScriptRole(from, to) {
+  if (!from || !to || from === to) return;
+  const ta = $("#s-text");
+  if (!ta) return;
+  const lines = ta.value.split("\n");
+  let changed = 0;
+  const re = new RegExp(`^(\\s*)\\[${from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\]`);
+  const next = lines.map((line) => {
+    if (!re.test(line)) return line;
+    changed += 1;
+    return line.replace(re, `$1[${to}]`);
+  });
+  if (!changed) return;
+  ta.value = next.join("\n");
+  _draftWrite();
+  toast(`已把「${from}」的 ${changed} 行映射到「${to}」`, "ok");
+  updateScriptPreview();
+}
+
+/* 角色自动补全：只在本行行首的 ``[`` 后面弹建议，避免在正文里输入
+   「[」时也跳出一堆音色。选中的是完整音色名，不是替换整段文本。 */
+let SCRIPT_AC = { at: -1, items: [], on: -1 };
+
+function closeScriptAutocomplete() {
+  $("#s-ac")?.remove();
+  SCRIPT_AC = { at: -1, items: [], on: -1 };
+}
+
+function paintScriptAutocomplete() {
+  $("#s-ac")?.remove();
+  if (!SCRIPT_AC.items.length) return;
+  const ta = $("#s-text");
+  const box = $("#s-box");
+  if (!ta || !box) return;
+  const lineH = parseFloat(getComputedStyle(ta).lineHeight) || 27;
+  const lines = ta.value.slice(0, SCRIPT_AC.at).split("\n");
+  const lineNo = lines.length - 1;
+  const el = document.createElement("div");
+  el.id = "s-ac";
+  el.className = "s-ac";
+  el.setAttribute("role", "listbox");
+  el.style.top = Math.max(6, (lineNo + 1) * lineH - ta.scrollTop + 6) + "px";
+  el.style.left = "12px";
+  el.innerHTML = SCRIPT_AC.items.map((name, i) => `<button type="button"
+    class="s-ac__item${i === SCRIPT_AC.on ? " is-on" : ""}" role="option"
+    aria-selected="${i === SCRIPT_AC.on}" data-ac="${esc(name)}">${esc(name)}</button>`).join("");
+  box.appendChild(el);
+  $$("[data-ac]", el).forEach((b) => b.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    acceptScriptAutocomplete(b.dataset.ac);
+  }));
+}
+
+function updateScriptAutocomplete() {
+  const ta = $("#s-text");
+  if (!ta || ta.selectionStart !== ta.selectionEnd) return closeScriptAutocomplete();
+  const before = ta.value.slice(0, ta.selectionStart);
+  const at = before.lastIndexOf("[");
+  if (at < 0 || at < before.lastIndexOf("\n")) {
+    return closeScriptAutocomplete();
+  }
+  const typed = before.slice(at + 1);
+  if (/[\[\]]/.test(typed)) return closeScriptAutocomplete();
+  const q = typed.trim().toLowerCase();
+  const items = VOICES.map((v) => v.name)
+    .filter((name) => !q || name.toLowerCase().includes(q))
+    .slice(0, 6);
+  if (!items.length) return closeScriptAutocomplete();
+  SCRIPT_AC = { at: at + 1, items, on: 0 };
+  paintScriptAutocomplete();
+}
+
+function acceptScriptAutocomplete(name) {
+  const ta = $("#s-text");
+  if (!ta || !name) return closeScriptAutocomplete();
+  const start = SCRIPT_AC.at;
+  const end = ta.selectionStart;
+  ta.value = ta.value.slice(0, start) + name + "]" + ta.value.slice(end);
+  const caret = start + name.length + 1;
+  ta.setSelectionRange(caret, caret);
+  closeScriptAutocomplete();
+  _draftWrite();
+  clearTimeout(_scriptTimer);
+  updateScriptPreview();
+  ta.focus();
+}
+
+function initScriptDemo() {
+  const q = new URLSearchParams(location.search);
+  if (q.get("demo") !== "1") return;
+  const ta = $("#s-text");
+  if (!ta) return;
+  // 演示参数是给验收 / 截图用的，不能覆盖用户真实草稿。
+  // 只有显式传了 text，或文本框本来就是空的，才填入演示内容。
+  const demoText = q.get("text");
+  if (!demoText && ta.value.trim()) return;
+  ta.value = demoText || (
+    "[韩立][压低了声音] 此丹的药力，恐怕不止于此。\n"
+    + "> 南宫婉抬眼看向他。\n"
+    + "[南宫婉] 你是说……服下之后会有异动？\n"
+    + "# [韩立] 这一句先不念。\n"
+    + "// 这里留给之后补一段反问。\n"
+    + "=== 第二场 夜 ===\n"
+    + "[韩立] 三日内必有反应。"
+  );
+  updateScriptPreview();
+}
+
+function setScriptTab(name) {
+  const valid = ["script", "cast", "params"];
+  if (!valid.includes(name)) name = "script";
+  $$("#s-tabs [data-s-tab]").forEach((b) => {
+    const on = b.dataset.sTab === name;
+    b.classList.toggle("is-on", on);
+    b.setAttribute("aria-selected", on ? "true" : "false");
+    b.tabIndex = on ? 0 : -1;
+  });
+  $$("#view-script .s-pane[data-s-pane]").forEach((p) => {
+    p.classList.toggle("is-on", p.dataset.sPane === name);
+  });
+}
 
 /* 只把行首的方括号组包上颜色，**其余一个字都不改**。
    颜色是「在原文上加壳」，不是「按解析结果重拼一行」—— 解析会把行首空白、
@@ -4397,7 +5245,15 @@ function hlLineHTML(raw) {
 function renderScriptHighlight() {
   const ta = $("#s-text"), hl = $("#s-hl");
   if (!ta || !hl) return;
-  hl.innerHTML = ta.value.split("\n").map(hlLineHTML).join("");
+  const active = new Set((SCRIPT_OUTLINE_PV?.lines || [])
+    .filter((l) => l.kind === "comment" || l.kind === "action")
+    .map((l) => l.raw || ""));
+  hl.innerHTML = ta.value.split("\n").map((raw) => {
+    const row = hlLineHTML(raw);
+    return active.has(raw)
+      ? row.replace('class="hl-line', 'class="hl-line is-meta')
+      : row;
+  }).join("");
   syncScriptHighlight();
 }
 
@@ -4413,6 +5269,7 @@ function syncScriptHighlight() {
 
 async function updateScriptPreview() {
   const text = $("#s-text").value;
+  const seq = ++SCRIPT_SEQ;
   const lines = text.split("\n").filter((l) => l.trim()).length;
   $("#s-count").textContent = lines + " 行";
   // 先把高亮层跟正文对齐（颜色沿用上一次解析的结论），再等解析回来刷新颜色。
@@ -4421,27 +5278,40 @@ async function updateScriptPreview() {
   if (!text.trim()) {
     $("#s-tidy").disabled = true;
     SCRIPT_BAD = new Set();
+    SCRIPT_PV = null;
+    SCRIPT_OUTLINE_PV = null;
     $("#s-stats").classList.add("hidden");
     $("#s-stats").innerHTML = "";
     $("#s-issues").innerHTML = "";
+    renderScriptOutline();
+    renderScriptCast();
     return;
   }
   $("#s-tidy").disabled = false;
   try {
     const pv = await previewText(text, "script");
+    if (seq !== SCRIPT_SEQ) return;   // 快速编辑时，旧请求不能覆盖新文本的解析结果
+    SCRIPT_PV = pv;
+    SCRIPT_OUTLINE_PV = pv;
     // 只有**解析不过**的行才标红。「音色不在库里」不算 —— 那一行格式是对的
     // （解析器认可），标红会跟下面那条汇总提示打架。
-    SCRIPT_BAD = new Set(pv.lines.filter((l) => !l.ok).map((l) => l.raw || ""));
+    SCRIPT_BAD = new Set(pv.lines
+      .filter((l) => !l.ok && !l.ignored && !l.is_scene)
+      .map((l) => l.raw || ""));
     renderScriptHighlight();
+    renderScriptOutline();
+    renderScriptCast({ keepPlayer: true });
 
     const s = pv.stats;
     $("#s-stats").classList.remove("hidden");
     $("#s-stats").innerHTML = [
       ["行", s.total_lines], ["可合成", s.ok_lines], ["角色", s.role_count],
       ["带情感", s.instruct_lines], ["字数", s.chars],
+      ["预计时长", fmtSpan(scriptEstimate(s.chars))],
     ].map(([k, v]) => `<span class="metric">${esc(k)}<b>${v}</b></span>`).join("");
 
-    const bad = pv.lines.filter((l) => !l.ok);
+    // 场景/注释/动作是合法的非合成行，不属于「格式错误」。
+    const bad = pv.lines.filter((l) => !l.ok && !l.ignored && !l.is_scene);
     const missing = pv.issues.filter((i) => i.includes("不在库里"));
     $("#s-issues").innerHTML =
       // 哪几行有问题，框里已经用红底标出来了，这里只说**为什么** ——
@@ -4453,7 +5323,10 @@ async function updateScriptPreview() {
           + VOICES.map((v) => v.name).join(" / "), "error")
         : "")
       + (!bad.length && !missing.length ? noteHTML("每一行都能解析。", "ok") : "");
-  } catch (e) { $("#s-issues").innerHTML = noteHTML(e.message, "error"); }
+  } catch (e) {
+    if (seq !== SCRIPT_SEQ) return;
+    $("#s-issues").innerHTML = noteHTML(e.message, "error");
+  }
 }
 
 /* 插到光标处。光标停在某行中间时另起一行 —— 一行只能有一个行首角色，
@@ -4472,6 +5345,179 @@ function insertRoleName(name) {
   _draftWrite();          // 程序赋值不派发 input，草稿得自己存一次
   clearTimeout(_scriptTimer);
   updateScriptPreview();
+  // 演示文本只在页面启动时填一次。这里绝不能再调 initScriptDemo()：
+  // 程序插入音色后也会走到这里，再调一次会把刚插入的内容整段覆盖掉。
+}
+
+function scriptSnapshotTitle(text) {
+  const first = String(text || "").split("\n").map((s) => s.trim()).find(Boolean) || "未命名剧本";
+  return first.length > 28 ? first.slice(0, 28) + "…" : first;
+}
+
+function loadScriptSnapshots() {
+  try {
+    const rows = JSON.parse(localStorage.getItem(SCRIPT_SNAP_KEY) || "[]");
+    return Array.isArray(rows) ? rows.filter((x) => x && typeof x.text === "string") : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function saveScriptSnapshots(rows) {
+  try { localStorage.setItem(SCRIPT_SNAP_KEY, JSON.stringify(rows.slice(0, SCRIPT_SNAP_MAX))); }
+  catch (_) { toast("浏览器存储已满，快照没有保存", "err"); }
+}
+
+function renderScriptSnapshots() {
+  const host = $("#s-snapshots");
+  if (!host) return;
+  const rows = loadScriptSnapshots();
+  host.innerHTML = rows.length
+    ? rows.map((s) => `<div class="s-snap">
+        <span class="s-snap__t" title="${esc(s.title || scriptSnapshotTitle(s.text))}">${esc(s.title || scriptSnapshotTitle(s.text))}</span>
+        <span class="s-snap__m">${esc(s.ts || "")}</span>
+        <button type="button" class="s-mini" data-s-snap-load="${esc(s.id)}">恢复</button>
+        <button type="button" class="s-mini" data-s-snap-del="${esc(s.id)}" aria-label="删除快照">删除</button>
+      </div>`).join("")
+    : `<p class="hint">还没有快照。保存后会留在本机浏览器里，最多 ${SCRIPT_SNAP_MAX} 个。</p>`;
+  $$("[data-s-snap-load]", host).forEach((b) => b.addEventListener("click", async () => {
+    const row = loadScriptSnapshots().find((x) => x.id === b.dataset.sSnapLoad);
+    if (!row) return;
+    const now = $("#s-text").value;
+    if (now.trim() && now !== row.text) {
+      const ok = await askConfirm({
+        title: "恢复这个快照？",
+        body: `<p class="apidesc">当前剧本会先自动存成一个快照，再恢复所选版本。</p>`,
+        okLabel: "恢复",
+      });
+      if (!ok) return;
+      const rows = loadScriptSnapshots();
+      rows.unshift({
+        id: "s" + Date.now(), ts: new Date().toLocaleString(),
+        title: scriptSnapshotTitle(now), text: now, gap_secs: scriptGap(),
+      });
+      saveScriptSnapshots(rows);
+    }
+    $("#s-text").value = row.text;
+    if (row.gap_secs != null) saveScriptGap(row.gap_secs);
+    _draftWrite();
+    updateScriptPreview();
+    renderScriptSnapshots();
+    toast("已恢复快照", "ok");
+  }));
+  $$("[data-s-snap-del]", host).forEach((b) => b.addEventListener("click", () => {
+    saveScriptSnapshots(loadScriptSnapshots().filter((x) => x.id !== b.dataset.sSnapDel));
+    renderScriptSnapshots();
+  }));
+}
+
+function downloadTextFile(name, text, mime = "text/plain;charset=utf-8") {
+  const blob = new Blob([text], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function scriptTimedLines(pv = SCRIPT_PV, gap = scriptGap()) {
+  if (!pv) return [];
+  let t = 0;
+  const known = new Set(VOICES.map((v) => v.name));
+  return pv.lines.filter((l) => l.ok && !l.disabled && !l.ignored
+    && known.has(l.role)).map((l) => {
+    const dur = Math.max(0.25, Number(l.est_secs) || scriptEstimate(l.chars));
+    const row = { ...l, start: t, duration: dur, end: t + dur };
+    t += dur + gap;
+    return row;
+  });
+}
+
+function fmtSubtitleTime(sec, comma = true) {
+  const ms = Math.max(0, Math.round(Number(sec || 0) * 1000));
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  const s = Math.floor((ms % 60000) / 1000);
+  const r = ms % 1000;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:`
+    + `${String(s).padStart(2, "0")}${comma ? "," : "."}${String(r).padStart(3, "0")}`;
+}
+
+function exportScriptSRT() {
+  const rows = scriptTimedLines();
+  if (!rows.length) { toast("还没有可导出的台词", "warn"); return; }
+  const text = rows.map((r, i) => `${i + 1}\n${fmtSubtitleTime(r.start)} --> `
+    + `${fmtSubtitleTime(r.end)}\n[${r.role}] ${r.content}`).join("\n\n") + "\n";
+  downloadTextFile("script.srt", text, "application/x-subrip;charset=utf-8");
+}
+
+function exportScriptLRC() {
+  const rows = scriptTimedLines();
+  if (!rows.length) { toast("还没有可导出的台词", "warn"); return; }
+  const stamp = (sec) => {
+    const ms = Math.max(0, Math.round(sec * 100));
+    const m = Math.floor(ms / 6000);
+    const s = Math.floor((ms % 6000) / 100);
+    const cs = ms % 100;
+    return `[${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${String(cs).padStart(2, "0")}]`;
+  };
+  const text = `[ti:剧本工坊]\n[by:Qwen3-TTS Studio]\n`
+    + rows.map((r) => `${stamp(r.start)}[${r.role}] ${r.content}`).join("\n") + "\n";
+  downloadTextFile("script.lrc", text, "text/plain;charset=utf-8");
+}
+
+function exportScriptJSON() {
+  if (!SCRIPT_PV) { toast("还没有可导出的剧本", "warn"); return; }
+  const data = {
+    title: scriptSnapshotTitle($("#s-text").value),
+    exported_at: new Date().toISOString(),
+    gap_secs: scriptGap(),
+    readings: loadScriptReadings(),
+    chars_per_sec: Number(BOOT.limits?.chars_per_sec) || 4.8,
+    text: $("#s-text").value,
+    stats: SCRIPT_PV.stats,
+    cast: SCRIPT_PV.cast,
+    scenes: SCRIPT_PV.scenes,
+    lines: SCRIPT_PV.lines,
+  };
+  downloadTextFile("script.json", JSON.stringify(data, null, 2), "application/json;charset=utf-8");
+}
+
+function renderScriptTimeline(R, result) {
+  if (!R || !result) return;
+  const snap = SCRIPT_LAST_RESULT;
+  const rows = scriptTimedLines(snap?.preview, snap?.gap_secs ?? scriptGap());
+  if (!rows.length) return;
+  const total = rows[rows.length - 1].end || 1;
+  const byRole = new Map();
+  rows.forEach((r) => {
+    const list = byRole.get(r.role) || [];
+    list.push(r);
+    byRole.set(r.role, list);
+  });
+  const host = R.params;
+  const old = host.querySelector(".s-timeline");
+  old?.remove();
+  const el = document.createElement("div");
+  el.className = "s-timeline";
+  el.innerHTML = `<div class="pmeta__t">结果时间轴</div>
+    ${[...byRole.entries()].map(([role, list]) => `<div class="s-track">
+      <span class="s-track__r" style="--role-c:${scriptRoleColor(role)}">${esc(role)}</span>
+      <span class="s-track__bar">${list.map((r) => `<button type="button"
+        class="s-track__seg" style="flex:${Math.max(1, r.duration)} 1 0;--role-c:${scriptRoleColor(role)};animation-delay:${Math.min(500, rows.indexOf(r) * 18)}ms"
+        data-s-seek="${r.start}" title="第 ${r.index} 行 · ${esc(r.content.slice(0, 36))}"
+        aria-label="播放到第 ${r.index} 行"></button>`).join("")}</span>
+    </div>`).join("")}
+    <p class="s-timeline__legend" data-s-timeline-legend>生成时快照 · 按 ${total.toFixed(1)} 秒估算；点色块跳到对应台词。</p>`;
+  host.appendChild(el);
+  $$("[data-s-seek]", el).forEach((b) => b.addEventListener("click", () => {
+    const t = Number(b.dataset.sSeek) || 0;
+    R.player.audio.currentTime = Math.min(t, R.player.duration || t);
+    R.player.audio.play().catch(() => {});
+  }));
 }
 
 function initScript() {
@@ -4482,8 +5528,9 @@ function initScript() {
     renderScriptHighlight();
     clearTimeout(_scriptTimer);
     _scriptTimer = setTimeout(updateScriptPreview, 240);
+    updateScriptAutocomplete();
   });
-  ta.addEventListener("scroll", syncScriptHighlight);
+  ta.addEventListener("scroll", () => { syncScriptHighlight(); paintScriptAutocomplete(); });
   // 拖动右下角改高度、窗口变窄、滚动条出现/消失 —— 都会改变可写宽度
   new ResizeObserver(syncScriptHighlight).observe(ta);
   // 输入法拼字期间要把两层换过来（见 CSS 那段注释）：拼字串是 textarea 自己画的，
@@ -4493,7 +5540,64 @@ function initScript() {
   ta.addEventListener("compositionend", () => {
     box.classList.remove("is-composing");
     renderScriptHighlight();
+    updateScriptAutocomplete();
   });
+
+  // 移动端三段式：桌面不显示 tab，也不会隐藏任何 pane。
+  $$("#s-tabs [data-s-tab]").forEach((b) => {
+    b.addEventListener("click", () => setScriptTab(b.dataset.sTab));
+    b.addEventListener("keydown", (e) => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+      const tabs = $$("#s-tabs [data-s-tab]");
+      const i = tabs.indexOf(b);
+      const next = e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1
+        : (i + (e.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+      e.preventDefault();
+      tabs[next].focus();
+      setScriptTab(tabs[next].dataset.sTab);
+    });
+  });
+  setScriptTab("script");
+
+  // Ctrl/Cmd+Enter 从剧本页直接生成；Escape 先收掉浮层/下拉，再回到剧本 pane。
+  ta.addEventListener("keydown", (e) => {
+    if (SCRIPT_AC.items.length) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        SCRIPT_AC.on = (SCRIPT_AC.on + (e.key === "ArrowDown" ? 1 : -1)
+          + SCRIPT_AC.items.length) % SCRIPT_AC.items.length;
+        paintScriptAutocomplete();
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        acceptScriptAutocomplete(SCRIPT_AC.items[SCRIPT_AC.on]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeScriptAutocomplete();
+        return;
+      }
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      e.preventDefault();
+      $("#s-go")?.click();
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || $("#view-script")?.classList.contains("hidden")) return;
+    hideTip();
+    const active = document.activeElement;
+    const inDetail = active?.matches("[data-s-line], [data-s-locate], [data-s-disable], [data-s-try], [data-s-role], [data-s-role-try]");
+    if (inDetail) {
+      active.blur();
+      e.preventDefault();
+      return;
+    }
+    if (window.matchMedia("(max-width: 720px)").matches) setScriptTab("script");
+  });
+
   $("#s-sample").addEventListener("click", () => {
     // 角色名从音色库里取，不写死。写死成某个音色的话，用户一旦把它改名或删掉，
     // 点一次示例就是满屏「没有这个音色」—— 比不给示例还糟。
@@ -4512,12 +5616,31 @@ function initScript() {
   });
   $("#s-tidy").addEventListener("click", async () => {
     try {
-      const pv = await previewText(ta.value, "script");
-      const good = pv.lines.filter((l) => l.ok);
-      if (!good.length) { toast("没有一行能解析，无从整理", "warn"); return; }
-      ta.value = good.map((l) => `[${l.role}]` + (l.instruct ? `[${l.instruct}]` : "") + ` ${l.content}`).join("\n");
+      const text = ta.value;
+      const pv = await previewText(text, "script");
+      // 以 parser.render 为唯一口径：场景、注释、动作、禁用状态都保留，
+      // 这样「整理」不会像以前那样把注释和舞台说明直接丢掉。
+      const kept = pv.lines.filter((l) => l.is_scene || l.kind === "comment"
+        || l.kind === "action" || ((l.ok || l.disabled) && l.role));
+      if (!kept.some((l) => l.ok || l.disabled)) {
+        toast("没有一行能解析，无从整理", "warn");
+        return;
+      }
+      // 本地先按同一套规则重排；只有确实出现了「非空行被丢弃」时才去问后端，
+      // 这样常见路径不增加一次网络往返。后端 render() 是同样的语义。
+      const local = kept.map((l) => {
+        if (l.is_scene) return l.raw || "";
+        if (l.kind === "comment" || l.kind === "action") {
+          return (l.disabled ? "# " : "") + (l.raw || "");
+        }
+        return `${l.disabled ? "# " : ""}[${l.role}]`
+          + (l.instruct ? `[${l.instruct}]` : "") + ` ${l.content}`;
+      }).join("\n");
+      const dropped = text.split("\n").filter((l) => l.trim()).length !== kept.length;
+      ta.value = local;
       updateScriptPreview();
-      toast(`已整理 ${good.length} 行`, "ok");
+      toast(`已整理 ${kept.length} 行（注释、动作和禁用状态都保留）`
+        + (dropped ? "；无法解析的行已移除" : ""), "ok");
     } catch (e) { toast(e.message, "err"); }
   });
 
@@ -4534,11 +5657,73 @@ function initScript() {
     if (name) insertRoleName(name);
   });
 
+  const gapInput = $("#s-gap");
+  if (gapInput) {
+    gapInput.value = scriptGap().toFixed(2);
+    $("#s-gap-pill").textContent = scriptGap().toFixed(2) + " s";
+    gapInput.addEventListener("change", () => {
+      const v = saveScriptGap(gapInput.value);
+      gapInput.value = v.toFixed(2);
+    });
+  }
+  $("#s-snapshot-save")?.addEventListener("click", () => {
+    const text = ta.value;
+    if (!text.trim()) { toast("先写点剧本再存快照", "warn"); return; }
+    const rows = loadScriptSnapshots();
+    rows.unshift({
+      id: "s" + Date.now(),
+      ts: new Date().toLocaleString(),
+      title: scriptSnapshotTitle(text),
+      text,
+      gap_secs: scriptGap(),
+    });
+    saveScriptSnapshots(rows);
+    renderScriptSnapshots();
+    toast("当前版本已存为快照", "ok");
+  });
+  $("#s-snapshot-clear")?.addEventListener("click", async () => {
+    if (!loadScriptSnapshots().length) return;
+    const ok = await askConfirm({
+      title: "清空全部快照？",
+      body: `<p class="apidesc">只删除浏览器里保存的剧本快照，当前编辑区不会受影响。</p>`,
+      okLabel: "清空",
+    });
+    if (!ok) return;
+    saveScriptSnapshots([]);
+    renderScriptSnapshots();
+  });
+  $("#s-export-json")?.addEventListener("click", exportScriptJSON);
+  $("#s-export-srt")?.addEventListener("click", exportScriptSRT);
+  $("#s-export-lrc")?.addEventListener("click", exportScriptLRC);
+  $("#s-reading-add")?.addEventListener("click", () => {
+    const from = $("#s-reading-from");
+    const to = $("#s-reading-to");
+    if (!from?.value.trim() || !to?.value.trim()) {
+      toast("读音规则的原词和读法都要填写", "warn");
+      return;
+    }
+    saveScriptReadings([
+      ...loadScriptReadings(),
+      { from: from.value, to: to.value },
+    ]);
+    from.value = "";
+    to.value = "";
+    renderScriptReadings();
+    from.focus();
+    toast("读音规则已添加；单句试听和整篇合成都会生效", "ok");
+  });
+  renderScriptReadings();
+  renderScriptSnapshots();
+
   RAILS.s = renderRail("s", { goLabel: "合成整段剧本" });
   renderAdv("s", [
     "每行会按本机单段上限继续切分；同一角色的多段会尽量复用音色基因与内核缓存。",
     "有任何一行的角色不在音色库里，那一行会被跳过 —— 输出不会因此失败，但会在结果里列出提醒。",
   ]);
+  // 剧本页的高级设置默认收起：桌面右栏已经很长，移动端更不该先铺两张说明表。
+  $$("#s-adv details.acc").forEach((d) => { d.open = false; });
+  const gapRow = $("#s-adv details.acc .kv tr:last-child");
+  if (gapRow) gapRow.hidden = true;
 
   RAILS.s.go(async () => {
     const text = ta.value.trim();
@@ -4549,17 +5734,37 @@ function initScript() {
     if (missing.length === pv.stats.ok_lines) {
       toast("所有角色的音色都不在库里", "warn"); return;
     }
+    const disabled = pv.lines.filter((l) => l.disabled).length;
     if (missing.length) toast(`${missing.length} 行因缺音色会被跳过`, "warn");
+    if (disabled) toast(`${disabled} 行已禁用，不会进入合成`, "ok");
     const btn = $("#s-go");
     btn.disabled = true;
-    await runJob({
-      mode: "script", text, language: RAILS.s.lang(), size: RAILS.s.size(),
+    const gap = scriptGap();
+    const ttsText = pv.lines.map((ln) => {
+      if (ln.is_scene || ln.kind === "comment" || ln.kind === "action") {
+        return ln.raw || "";
+      }
+      if (!ln.ok) return ln.raw || "";
+      const body = applyScriptReadings(ln.content);
+      return `${ln.disabled ? "# " : ""}[${ln.role}]`
+        + (ln.instruct ? `[${ln.instruct}]` : "") + ` ${body}`;
+    }).join("\n");
+    const job = await runJob({
+      mode: "script", text: ttsText, language: RAILS.s.lang(), size: RAILS.s.size(),
+      gap_secs: gap,
       ...ppPayload(),
     }, RAILS.s.R);
+    if (job.ok) {
+      // 时间轴必须锁在「提交生成时」的解析快照和 gap 上。
+      // 生成期间/生成后继续编辑正文，不能让结果时间轴悄悄变成另一份剧本。
+      SCRIPT_LAST_RESULT = { text, preview: pv, gap_secs: gap };
+      renderScriptTimeline(RAILS.s.R, job.res);
+    }
     btn.disabled = false;
   });
 
   updateScriptPreview();
+  initScriptDemo();
 }
 
 /* ============================================================================
@@ -5190,6 +6395,65 @@ function histTextPreview(t) {
   return s.length > HIST_TEXT_IN_ROW ? s.slice(0, HIST_TEXT_IN_ROW) + "…" : s;
 }
 
+/* 复制统一走这里：按钮和详情弹窗用的是同一份文本，提示文案也保持一致。
+   失败时把焦点留给原按钮，用户可以直接改用「选中正文 → Ctrl+C」。 */
+async function copyHistoryText(text, btn, okMsg) {
+  try {
+    await navigator.clipboard.writeText(text || "");
+    toast(okMsg, "ok");
+    if (btn) {
+      const old = btn.textContent;
+      btn.textContent = "已复制";
+      setTimeout(() => { btn.textContent = old; }, 1600);
+    }
+    return true;
+  } catch (_) {
+    toast("复制失败，请在详情里选中正文后按 Ctrl+C", "err");
+    return false;
+  }
+}
+
+/* 合成记录的持久详情。
+   记录正文只存一份 it.text，不引入新的接口或数据格式；
+   `textContent` 由模板里的 esc() 先转义，详情区本身不会再解释 HTML。 */
+function openHistoryDetail(it) {
+  hideTip();
+  const trigger = document.activeElement;
+  const m = openModal({
+    title: "合成记录详情",
+    body: `<p class="histdetail__meta">${esc(histMetaHTML(it).join(" · "))}</p>
+      <pre class="histdetail__text" data-role="detail-text" tabindex="0"
+           aria-label="合成记录正文，可选择复制">${esc(it.text || "")}</pre>`,
+    foot: `<button class="btn btn--ghost" data-role="copy-params">复制文本参数</button>
+           <button class="btn btn--primary" data-role="copy-all">复制全文</button>`,
+  });
+  const detail = m.$('[data-role=detail-text]');
+  const all = m.$('[data-role=copy-all]');
+  const params = m.$('[data-role=copy-params]');
+  // 两个复制按钮都只复制 it.text；但分别给出明确的动作名，
+  // 避免用户把「复制文本参数」误解成会带走音色/模型等隐藏状态。
+  all.addEventListener("click", () => copyHistoryText(it.text || "", all, "全文已复制"));
+  params.addEventListener("click", () => copyHistoryText(
+    it.text || "", params, "参数已复制（只是文本，重跑请到对应页填回）"));
+  // 详情打开后，列表里那层悬停浮层不应继续挂着；滚轮滚动详情区
+  // 也不会触发它（它已经收起，且 <dialog> 的模态层隔离了页面滚动）。
+  // 打开后先把焦点交给正文：键盘用户可以直接 Ctrl+A / Ctrl+C，
+  // 也避免焦点停在列表里被遮住的按钮上。
+  setTimeout(() => {
+    try {
+      detail.focus({ preventScroll: true });
+      detail.scrollTop = 0;
+    } catch (_) {}
+  }, 0);
+  // dialog 的 close 可能来自 Esc、遮罩或 ✕；统一把焦点还给触发按钮。
+  const restore = () => {
+    if (trigger && trigger.isConnected && typeof trigger.focus === "function") {
+      try { trigger.focus({ preventScroll: true }); } catch (_) {}
+    }
+  };
+  m.d.addEventListener("close", restore);
+}
+
 function renderHistory() {
   const host = $("#h-host");
   const items = _lastHistory;
@@ -5219,23 +6483,34 @@ function renderHistory() {
     const id = row.dataset.id;
     const it = items.find((x) => x.id === id);
     const slot = $('[data-role=slot]', row);
-    // 正文在这里被截成两行；**真的截到了才挂浮层** ——
+    // 正文在这里被截成两行；悬停浮层只在**真的截到了**时挂上 ——
     // 一行就放得下的短句再弹一遍原文，只是噪音。
+    // 点击正文则始终打开持久详情，短句也允许查看与复制。
     const txt = $(".hrow__text", row);
     if (txt && txt.scrollHeight > txt.clientHeight + 1) {
       txt.addEventListener("mouseenter", () => showTip(it.text || "", txt));
       txt.addEventListener("mouseleave", hideTipSoon);
     }
+    // 悬停只是辅助；点击正文是持久阅读与复制的正式入口。
+    // 正文按钮的点击不再向上冒泡，避免外层将来加行点击时重复打开详情。
+    if (txt) txt.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openHistoryDetail(it);
+    });
     const play = $('[data-role=play]', row);
     if (play) play.addEventListener("click", () => {
       if (slot.dataset.open === "1") { closeSlot(slot); return; }
       openPlayer(slot, "/media/out/" + encodeURIComponent(it.file), it.file);
     });
     $('[data-role=copy]', row)?.addEventListener("click", async (e) => {
-      try {
-        await navigator.clipboard.writeText(it.text || "");
-        toast("参数已复制（只是文本，重跑请到对应页填回）", "ok");
-      } catch (_) { toast("复制失败，浏览器拒绝了剪贴板访问", "err"); }
+      // 复制按钮独立于正文按钮，阻止冒泡以免未来行级点击误开详情。
+      e.stopPropagation();
+      await copyHistoryText(it.text || "", e.currentTarget,
+        "参数已复制（只是文本，重跑请到对应页填回）");
+    });
+    $('[data-role=detail]', row)?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openHistoryDetail(it);
     });
     $('[data-role=del]', row).addEventListener("click", async () => {
       try {
@@ -5292,9 +6567,11 @@ function histRowHTML(it) {
       ${err ? `<span style="color:var(--err);font-weight:600">生成失败</span>`
             : gone ? `<span style="color:var(--warn)">音频已被清理</span>` : ""}
     </div>
-    <p class="hrow__text">${esc(histTextPreview(it.text))}</p>
+    <button class="hrow__text" type="button" data-role="text"
+            aria-label="查看这条合成记录的完整正文">${esc(histTextPreview(it.text))}</button>
     <div class="hrow__acts">
       ${it.file_exists ? `<button class="btn btn--outline btn--sm" data-role="play">试听</button>` : ""}
+      <button class="btn btn--ghost btn--sm" data-role="detail">查看全文</button>
       <button class="btn btn--ghost btn--sm" data-role="copy">复制文本参数</button>
       <button class="btn btn--ghost btn--sm" data-role="del">删除记录</button>
     </div>

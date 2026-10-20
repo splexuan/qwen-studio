@@ -6,7 +6,8 @@
       空态给得清楚、Esc 清空
    3. 剧本工坊的角色音色快捷条：点一下插到光标处（光标在行中间时另起一行）、
       已用的角色淡下去、插入的内容落进草稿
-   4. 合成记录的正文被截两行，鼠标移上去弹出全文；短到一行放得下的不弹
+   4. 合成记录的正文被截两行：短悬停预览仍可用；点击正文打开持久详情，
+      正文可选中，有「复制全文 / 复制文本参数」，Esc 可关，滚动不受影响
 
    自给自足：临时造两个音色、往 outputs/history.json 塞两条记录，收尾全撤掉。
    **用独立的浏览器上下文**（不共享 localStorage）—— 否则测试往剧本框里打的字
@@ -17,15 +18,19 @@
    端口默认 7867，可用 QWENSTUDIO_PORT 覆盖。
 */
 const fs = require("fs");
+const path = require("path");
 const { chromium } = require("playwright-core");
 
 const BASE = "http://127.0.0.1:" + (process.env.QWENSTUDIO_PORT || "7867");
 const OUT = "tools/_library_ux.png";
-const HIST = "C:/Game/qwen-studio/outputs/history.json";
+const ROOT = path.resolve(__dirname, "..");
+const HIST = path.join(ROOT, "outputs", "history.json");
 const V1 = "__验证_甲乙";
 const V2 = "__验证_丙丁";
 const V3 = "__验证_戊己";
-const WAV = process.env.UX_TEST_WAV || "C:/Game/qwen-studio/voices/皇帝.wav";
+const WAV = process.env.UX_TEST_WAV
+  || path.join(ROOT, "voices", fs.readdirSync(path.join(ROOT, "voices"))
+    .find((n) => n.toLowerCase().endsWith(".wav") && !n.startsWith("__验证_")) || "sample.wav");
 
 const jget = async (p) => (await fetch(BASE + p)).json();
 const jpost = async (p, b) => (await fetch(BASE + p, {
@@ -94,7 +99,9 @@ const RID_SHORT = "verify_ux_short";
   // ---- 准备：临时音色 + 临时记录 ----
   const lib = await jget("/api/voices");
   if (!lib.voices?.length) { console.log("音色库是空的，无法验证"); process.exit(1); }
-  const src = lib.voices[0].name;
+  // 「另存为」必须从一个真实存在的音色复制；优先挑有参考文本的那个，
+  // 这样即使某个库只留下空文本的音色，也不会在准备阶段误判。
+  const src = (lib.voices.find((v) => v.ref_text) || lib.voices[0]).name;
   await jpost("/api/voices/delete", { names: [V1, V2, V3] });
   // 参考文本现在是**必填**项（完整 ICL 没它根本用不了，入口就会拒）。
   // 「另存为」只在源音色自己有 ref_text 时才继承；这里源音色可能是空文本，
@@ -285,7 +292,15 @@ const RID_SHORT = "verify_ux_short";
 
     // 解析反馈并进了输入框：**框里标红说「哪一行」，下面说明「为什么」**。
     // （上一轮是「上面一条注意把问题念一遍、下面红行又写一遍」，那才叫重复。）
-    await page.waitForTimeout(700);
+    // 解析是防抖后再走接口，不能靠固定 sleep 猜它什么时候回来：
+    // 机器一忙，700ms 可能只够发出请求。等到「框里出现红行、统计已更新」
+    // 这个真实状态再断言。
+    await page.waitForFunction(() => {
+      const stats = document.querySelector("#s-stats");
+      return document.querySelectorAll("#s-hl .hl-line.is-bad").length === 2
+        && stats && !stats.classList.contains("hidden")
+        && stats.textContent.includes("可合成");
+    }, { timeout: 6000 });
     const pv = await page.evaluate(() => ({
       bad: [...document.querySelectorAll("#s-hl .hl-line.is-bad")].map((e) => e.textContent.trim()),
       issues: [...document.querySelectorAll("#s-issues .note")].map((e) => e.textContent.trim()),
@@ -300,7 +315,10 @@ const RID_SHORT = "verify_ux_short";
     await page.screenshot({ path: OUT.replace(".png", "_script_bad.png") });
 
     await page.fill("#s-text", `[${src}] 这一行格式没问题。`);
-    await page.waitForTimeout(700);
+    await page.waitForFunction(() => {
+      const note = document.querySelector("#s-issues .note");
+      return note && note.textContent.includes("每一行都能解析");
+    }, { timeout: 6000 });
     const okNote = await page.textContent("#s-issues .note").catch(() => "");
     ok("全都解析得出时给一句肯定", (okNote || "").includes("每一行都能解析"), (okNote || "").trim().slice(0, 40));
 
@@ -409,8 +427,8 @@ const RID_SHORT = "verify_ux_short";
     ok("全新名字直接存下来（这次改动没把正常保存弄坏）",
        (await libNames()).includes(V3), (await libNames()).filter((n) => n.startsWith("__验证")).join("、"));
 
-    // ======================= 4. 合成记录正文的悬停浮层 =======================
-    console.log("[4] 合成记录的正文悬停浮层");
+    // ======================= 4. 合成记录正文的持久详情 + 悬停预览 =======================
+    console.log("[4] 合成记录正文：持久详情 + 悬停预览");
     await goto("#history");
     await page.waitForSelector(`.hrow[data-id="${RID_LONG}"]`, { timeout: 15000 });
 
@@ -446,21 +464,22 @@ const RID_SHORT = "verify_ux_short";
       return {
         on: t.classList.contains("is-on"), text: t.textContent,
         pe: getComputedStyle(t).pointerEvents,
+        userSelect: getComputedStyle(t).userSelect,
         btnCount: btns.length,
         box: rect(t), row: rect(row), acts,
         inView: (() => { const r = t.getBoundingClientRect();
           return r.left >= 0 && r.top >= 0 && r.bottom <= innerHeight + 1 && r.right <= innerWidth + 1; })(),
       };
     }, RID_LONG);
-    ok("悬停后浮层出现", !!tip && tip.on === true);
+    ok("悬停后短预览出现", !!tip && tip.on === true);
     ok("浮层里是完整原文", !!tip && tip.text === LONG,
        tip ? `${tip.text.length} 字 vs 期望 ${LONG.length} 字` : "（没有浮层）");
     ok("浮层落在视口里", !!tip && tip.inView);
 
-    // 用户报过：浮层铺在左边，把那一行下面的「试听 / 复制 / 删除」压住了。
-    // 两条一起管：位置移到按钮右侧 + 压根不接鼠标事件（后者是兜底，
-    // 窗口窄到必须往回压时也保证点得到按钮）。
-    ok("浮层不接鼠标事件（压住也点得到按钮）", !!tip && tip.pe === "none", tip?.pe);
+    // 浮层只做短预览，但必须能接鼠标事件，才能移进去滚长文；
+    // 真正要选中、复制时走持久详情。
+    ok("浮层可接鼠标事件（能滚长文）", !!tip && tip.pe === "auto", tip?.pe);
+    ok("浮层本身不承担选中复制", !!tip && tip.userSelect === "none", tip?.userSelect);
     ok("浮层在操作按钮的右侧，没铺在左边",
        !!tip && tip.btnCount > 0 && tip.box.l >= tip.acts.r,
        `浮层左沿 ${Math.round(tip?.box.l)} · ${tip?.btnCount} 个按钮的右沿 ${Math.round(tip?.acts.r)}`);
@@ -472,12 +491,20 @@ const RID_SHORT = "verify_ux_short";
          + `${Math.round(tip.acts.r)} × ${Math.round(tip.acts.t)}–${Math.round(tip.acts.b)}` : "");
     if (tip?.on) await page.screenshot({ path: OUT.replace(".png", "_tip.png") });
 
+    // 鼠标移进浮层后不能立刻消失，否则用户没机会滚动查看。
+    if (tip?.on) {
+      await page.mouse.move(tip.box.l + 16, tip.box.t + 16);
+      await page.waitForTimeout(350);
+      ok("鼠标移入浮层后不消失",
+         await page.evaluate(() => !!document.querySelector(".tip.is-on")));
+    }
+
     await page.mouse.move(8, 8);
     await page.waitForTimeout(500);
-    ok("移开鼠标后浮层收起",
+    ok("移开鼠标后短预览收起",
        await page.evaluate(() => !document.querySelector(".tip")?.classList.contains("is-on")));
 
-    // 短到一行放得下的不弹
+    // 短到一行放得下的不弹预览
     const sbox = await page.evaluate((id) => {
       const r = document.querySelector(`.hrow[data-id="${id}"] .hrow__text`).getBoundingClientRect();
       return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
@@ -487,6 +514,87 @@ const RID_SHORT = "verify_ux_short";
     ok("短正文（一行放得下）不弹浮层",
        await page.evaluate(() => !document.querySelector(".tip")?.classList.contains("is-on")));
     await page.mouse.move(8, 8);
+
+    // ---- 持久详情：点击正文打开，正文可选中，复制入口齐全 ----
+    const textBtn = `.hrow[data-id="${RID_LONG}"] [data-role=text]`;
+    ok("正文是键盘可聚焦的按钮",
+       await page.$eval(textBtn, (el) =>
+         el.tagName === "BUTTON" && el.tabIndex >= 0
+         && el.getAttribute("aria-label")?.includes("完整正文")));
+    ok("记录行有显式「查看全文」入口",
+       await page.$(`.hrow[data-id="${RID_LONG}"] [data-role=detail]`) !== null);
+
+    await page.click(textBtn);
+    await page.waitForSelector("dialog.modal .histdetail__text", { timeout: 4000 });
+    await page.waitForTimeout(120);
+    const modal = await page.evaluate((longText) => {
+      const d = document.querySelector("dialog.modal");
+      const t = d?.querySelector(".histdetail__text");
+      if (!d || !t) return null;
+      const st = getComputedStyle(t);
+      return {
+        open: d.open,
+        text: t.textContent,
+        userSelect: st.userSelect,
+        overscroll: st.overscrollBehavior,
+        whiteSpace: st.whiteSpace,
+        copyAll: !!d.querySelector('[data-role=copy-all]'),
+        copyParams: !!d.querySelector('[data-role=copy-params]'),
+        focused: document.activeElement === t,
+        matches: t.textContent === longText,
+      };
+    }, LONG);
+    ok("点击正文打开持久详情", !!modal && modal.open === true);
+    ok("详情里是完整原文", !!modal && modal.matches,
+       modal ? `${modal.text.length} 字 vs 期望 ${LONG.length} 字` : "（没有详情）");
+    ok("详情正文可选择", !!modal && modal.userSelect === "text", modal?.userSelect);
+    ok("详情正文的滚动不向页面穿透",
+       !!modal && ["contain", "none"].includes(modal.overscroll), modal?.overscroll);
+    ok("详情保留换行", !!modal && modal.whiteSpace === "pre-wrap", modal?.whiteSpace);
+    ok("详情有「复制全文」", !!modal && modal.copyAll);
+    ok("详情有「复制文本参数」", !!modal && modal.copyParams);
+    ok("详情打开后焦点在正文上", !!modal && modal.focused);
+
+    const selected = await page.evaluate(() => {
+      const t = document.querySelector("dialog.modal .histdetail__text");
+      if (!t) return "";
+      const range = document.createRange();
+      range.selectNodeContents(t);
+      const sel = getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      return sel.toString();
+    });
+    ok("详情里的全文可以被选中", selected === LONG,
+       `${selected.length} 字 vs 期望 ${LONG.length} 字`);
+
+    // 滚轮滚正文时，详情不能自己消失；页面列表也不能被带着滚。
+    const scrollBefore = await page.evaluate(() => ({
+      body: document.scrollingElement.scrollTop,
+      detail: document.querySelector("dialog.modal .histdetail__text").scrollTop,
+    }));
+    const detailBox = await page.evaluate(() => {
+      const r = document.querySelector("dialog.modal .histdetail__text").getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+    await page.mouse.move(detailBox.x, detailBox.y);
+    await page.mouse.wheel(0, 600);
+    await page.waitForTimeout(250);
+    const scrollAfter = await page.evaluate(() => ({
+      open: !!document.querySelector("dialog.modal")?.open,
+      body: document.scrollingElement.scrollTop,
+      detail: document.querySelector("dialog.modal .histdetail__text").scrollTop,
+    }));
+    ok("滚动详情正文时弹窗保持打开", scrollAfter.open === true);
+    ok("滚动详情正文不会带动页面列表",
+       scrollAfter.body === scrollBefore.body,
+       `${scrollBefore.body} → ${scrollAfter.body}`);
+
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(250);
+    ok("Esc 关闭持久详情", await page.$("dialog.modal") === null);
+    ok("Esc 关闭后焦点回到正文按钮",
+       await page.evaluate((sel) => document.activeElement === document.querySelector(sel), textBtn));
 
     ok("全程无 JS 报错", consoleErrors.length === 0, consoleErrors.slice(0, 2).join(" | "));
   } finally {
