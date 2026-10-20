@@ -6756,6 +6756,42 @@ async function copyHistoryText(text, btn, okMsg) {
   }
 }
 
+/* 「复制文本参数」复制的是**这次用了什么 + 正文**，不是只有正文 ——
+   以前它和「复制全文」都只给 it.text，两个按钮完全一样，名字却在暗示参数。
+   这里按记录里真实存在的字段拼一份能读、能贴回去核对的文本；
+   复制全文仍然是纯正文，两者不再重复。 */
+function histParamsText(it) {
+  const out = [];
+  const put = (k, v) => {
+    if (v !== undefined && v !== null && v !== "") out.push(`${k}：${v}`);
+  };
+  put("时间", it.ts);
+  put("模式", MODE_LABEL[it.mode] || it.mode);
+  if (it.mode === "clone") put("音色", it.voice);
+  if (it.mode === "official") put("说话人", speakerLabel(it.speaker));
+  put("规格", sizeLabel(it.size));
+  put("语种", !it.language || it.language === "Auto" ? "Auto（自动识别）" : it.language);
+  if (it.mode === "design") put("音色描述", it.instruct);
+  else if (it.mode === "clone" || it.mode === "script") put("情感指令", it.instruct);
+  if (it.mode === "clone" && it.xvec_only != null) {
+    put("克隆方式", it.xvec_only ? "仅说话人向量" : "完整 ICL（含参考韵律）");
+  }
+  if (it.mode === "script" && it.gap_secs != null) put("段间静音", `${it.gap_secs} s`);
+  // 记录里存的是统计结果：applied 表示三项里至少有一项真的执行过。
+  // 关掉 / 空音频（带 reason）分别说出来，别把「没跑」误写成「跑了但没效果」。
+  const pp = it.postprocess;
+  if (pp && typeof pp === "object") {
+    if (pp.skipped === "stream") put("后处理", "边生成边播，已跳过");
+    else if (!pp.applied) put("后处理", pp.reason || "关闭");
+    else put("后处理", ppEffectText(pp) || "已处理");
+  }
+  if (it.duration) put("音频时长", fmtDur(it.duration));
+  if (it.took) put("生成耗时", `${it.took.toFixed(1)} s`);
+  if (it.chars) put("字数", it.chars);
+  if (it.status === "error") put("状态", "生成失败");
+  return out.join("\n") + "\n\n正文：\n" + (it.text || "");
+}
+
 /* 合成记录的持久详情。
    记录正文只存一份 it.text，不引入新的接口或数据格式；
    `textContent` 由模板里的 esc() 先转义，详情区本身不会再解释 HTML。 */
@@ -6773,11 +6809,10 @@ function openHistoryDetail(it) {
   const detail = m.$('[data-role=detail-text]');
   const all = m.$('[data-role=copy-all]');
   const params = m.$('[data-role=copy-params]');
-  // 两个复制按钮都只复制 it.text；但分别给出明确的动作名，
-  // 避免用户把「复制文本参数」误解成会带走音色/模型等隐藏状态。
+  // 两个按钮的分工：参数 = 这次怎么生成的 + 正文；全文 = 只有正文。
   all.addEventListener("click", () => copyHistoryText(it.text || "", all, "全文已复制"));
   params.addEventListener("click", () => copyHistoryText(
-    it.text || "", params, "参数已复制（只是文本，重跑请到对应页填回）"));
+    histParamsText(it), params, "文本和参数已复制（重跑前请到对应页核对）"));
   // 详情打开后，列表里那层悬停浮层不应继续挂着；滚轮滚动详情区
   // 也不会触发它（它已经收起，且 <dialog> 的模态层隔离了页面滚动）。
   // 打开后先把焦点交给正文：键盘用户可以直接 Ctrl+A / Ctrl+C，
@@ -6848,10 +6883,9 @@ function renderHistory() {
     $('[data-role=copy]', row)?.addEventListener("click", async (e) => {
       // 复制按钮独立于正文按钮，阻止冒泡以免未来行级点击误开详情。
       e.stopPropagation();
-      await copyHistoryText(it.text || "", e.currentTarget,
-        "参数已复制（只是文本，重跑请到对应页填回）");
-    });
-    $('[data-role=detail]', row)?.addEventListener("click", (e) => {
+      await copyHistoryText(histParamsText(it), e.currentTarget,
+        "文本和参数已复制（重跑前请到对应页核对）");
+    });    $('[data-role=detail]', row)?.addEventListener("click", (e) => {
       e.stopPropagation();
       openHistoryDetail(it);
     });
