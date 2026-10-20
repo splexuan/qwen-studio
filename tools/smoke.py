@@ -318,15 +318,15 @@ def main() -> int:
         check("  · 产出音频文件", bool(res.get("file")), str(res.get("file")))
         check("  · 时长合理", (res.get("duration") or 0) > 1.0, f"{res.get('duration')}s")
         check("  · 状态行含 RTF", "RTF" in (last.get("message") or ""), last.get("message", "").split("\n")[0])
-        # 输出后处理：默认三项全开，统计要随 result 回来，状态行要写清动了什么。
+        # 输出后处理：默认三项关闭，统计仍要随 result 回来。
         # 只验「有没有报」，不验具体数值 —— 数值取决于这次念的内容，不能当断言。
         pp = res.get("postprocess") or {}
         check("  · 后处理统计随结果返回", "applied" in pp, str(pp)[:90])
-        check("  · 默认三项全开且生效",
-              pp.get("applied") is True and bool(pp.get("silence"))
-              and bool(pp.get("normalize")) and bool(pp.get("fade")),
+        check("  · 默认三项关闭",
+              pp.get("applied") is False and not bool(pp.get("silence"))
+              and not bool(pp.get("normalize")) and not bool(pp.get("fade")),
               str({k: pp.get(k) for k in ("applied", "silence", "normalize", "fade")}))
-        check("  · 状态行写了后处理结果", "后处理：" in (last.get("message") or ""),
+        check("  · 状态行不写后处理结果", "后处理：" not in (last.get("message") or ""),
               (last.get("message") or "").split("\n")[-1][:60])
         st, ct, wav = call("GET", res["url"], raw=True)
         check("  · 音频可回放", st == 200 and wav[:4] == b"RIFF", f"{len(wav)} bytes")

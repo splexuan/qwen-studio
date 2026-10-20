@@ -54,17 +54,17 @@ function check(name, ok, detail = "") {
       mid: get("mid_ms").value,
     };
   });
-  check("默认三项全勾", def.silence && def.normalize && def.fade, JSON.stringify(def));
+  check("默认三项全不勾", !def.silence && !def.normalize && !def.fade, JSON.stringify(def));
   check("默认阈值 500", String(def.mid) === "500", String(def.mid));
 
   // --- 3. 改动会持久化 ---
   await page.evaluate(() => {
     const el = document.querySelector('#c-adv [data-pp="normalize"]');
-    el.checked = false;
+    el.checked = true;
     el.dispatchEvent(new Event("change", { bubbles: true }));
   });
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("qs.pp") || "{}"));
-  check("关掉归一化写进 localStorage", stored.normalize === false, JSON.stringify(stored));
+  check("开启归一化写进 localStorage", stored.normalize === true, JSON.stringify(stored));
 
   // --- 4. 越界手输被纠正 ---
   await page.evaluate(() => {
@@ -84,7 +84,7 @@ function check(name, ok, detail = "") {
     normalize: document.querySelector('#c-adv [data-pp="normalize"]').checked,
     mid: document.querySelector('#c-adv [data-pp="mid_ms"]').value,
   }));
-  check("刷新后仍是关", after.normalize === false);
+  check("刷新后仍是开", after.normalize === true);
   check("刷新后阈值仍是 3000", String(after.mid) === "3000", String(after.mid));
 
   // --- 6. 提交的 payload 里带上了这四个字段 ---
@@ -128,9 +128,9 @@ function check(name, ok, detail = "") {
   await page.waitForTimeout(1500);
 
   if (sent) {
-    check("payload 带 pp_silence", sent.pp_silence === true, String(sent.pp_silence));
-    check("payload 带 pp_normalize=false（上一段关掉的）", sent.pp_normalize === false, String(sent.pp_normalize));
-    check("payload 带 pp_fade", sent.pp_fade === true, String(sent.pp_fade));
+    check("payload 带 pp_silence=false（默认关）", sent.pp_silence === false, String(sent.pp_silence));
+    check("payload 带 pp_normalize=true（刚开启的）", sent.pp_normalize === true, String(sent.pp_normalize));
+    check("payload 带 pp_fade=false（默认关）", sent.pp_fade === false, String(sent.pp_fade));
     check("payload 带 pp_mid_ms=3000", String(sent.pp_mid_ms) === "3000", String(sent.pp_mid_ms));
   } else {
     check("payload 抓到了", false, "提交没触发（按钮被禁用或表单校验没过）");
@@ -141,7 +141,7 @@ function check(name, ok, detail = "") {
     const el = document.querySelector("#d-result [data-role=params]");
     return el ? el.innerText.replace(/\s+/g, " ") : "";
   });
-  check("参数表有「后处理 去静音 · 淡入淡出」", /后处理 去静音 · 淡入淡出/.test(card), card.slice(0, 200));
+  check("参数表有「后处理 归一化」", /后处理 归一化/.test(card), card.slice(0, 200));
   check("参数表有「剪掉 1.2 秒静音」", /剪掉 1\.2 秒静音/.test(card));
   check("参数表有「响度 +3.2 dB」", /响度 \+3\.2 dB/.test(card));
 

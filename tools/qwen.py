@@ -290,18 +290,13 @@ def _build_payload(a, text: str) -> dict:
     if a.mode == "script" and not text.strip():
         raise ApiError("剧本模式需要剧本正文（可 --text - 从 stdin 读）。")
 
-    # 后处理：默认全开，与服务端默认一致；只有显式关才发 false
-    if a.no_postprocess:
+    # 后处理默认关闭；--postprocess 开启整组，再按 --no-* 逐项关闭。
+    if a.no_postprocess or a.keep_raw:
         p["postprocess"] = False
-    else:
-        if a.no_silence:
-            p["pp_silence"] = False
-        if a.no_normalize:
-            p["pp_normalize"] = False
-        if a.no_fade:
-            p["pp_fade"] = False
-    if a.keep_raw:
-        p["postprocess"] = False
+    elif a.postprocess:
+        p["pp_silence"] = not a.no_silence
+        p["pp_normalize"] = not a.no_normalize
+        p["pp_fade"] = not a.no_fade
     return p
 
 
@@ -475,11 +470,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--full-icl", dest="full_icl", action="store_true",
                    help="完整 ICL（更贴参考韵律，必须给 --ref-text）")
     p.add_argument("--out", help="把音频下载到这个路径（默认只报 outputs/ 里的位置）")
+    p.add_argument("--postprocess", action="store_true",
+                   help="开启整组后处理（默认关闭）")
     p.add_argument("--no-postprocess", dest="no_postprocess", action="store_true",
-                   help="整组后处理关掉，拿模型原样")
-    p.add_argument("--no-silence", dest="no_silence", action="store_true", help="不剪长静音")
-    p.add_argument("--no-normalize", dest="no_normalize", action="store_true", help="不做响度归一化")
-    p.add_argument("--no-fade", dest="no_fade", action="store_true", help="不加首尾淡入淡出")
+                   help="强制关闭整组后处理（兼容旧命令）")
+    p.add_argument("--no-silence", dest="no_silence", action="store_true",
+                   help="与 --postprocess 同用时，不剪长静音")
+    p.add_argument("--no-normalize", dest="no_normalize", action="store_true",
+                   help="与 --postprocess 同用时，不做响度归一化")
+    p.add_argument("--no-fade", dest="no_fade", action="store_true",
+                   help="与 --postprocess 同用时，不加首尾淡入淡出")
     p.add_argument("--keep-raw", dest="keep_raw", action="store_true",
                    help="同 --no-postprocess（写起来更短的别名）")
     p.add_argument("--timeout", type=float, default=900.0, help="最长等待秒数，默认 900")

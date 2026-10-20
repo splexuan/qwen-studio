@@ -36,7 +36,7 @@ from __future__ import annotations
 import numpy as np
 
 # ---------------------------------------------------------------------------
-# 参数默认值 —— 与 omnivoice-studio 的默认行为对齐，只有归一化目标是新定的
+# 算法参数默认值 —— 阈值沿用 omnivoice-studio；三项处理开关默认关闭
 # ---------------------------------------------------------------------------
 FRAME_MS = 10           # 帧长（毫秒）。10 ms 是语音活动检测的常规粒度
 SILENCE_DB = -50.0      # 静音门限（dBFS）。与 omni 的 silence_thresh 一致
@@ -60,9 +60,9 @@ KEYS = ("pp_silence", "pp_normalize", "pp_fade")
 def defaults() -> dict:
     """给 /api/bootstrap 用：界面据此画默认勾选状态。"""
     return {
-        "silence": True,
-        "normalize": True,
-        "fade": True,
+        "silence": False,
+        "normalize": False,
+        "fade": False,
         "mid_ms": MID_SIL_MS,
         "edge_ms": EDGE_SIL_MS,
         "target_db": TARGET_DB,
@@ -72,18 +72,19 @@ def defaults() -> dict:
 def options(p: dict | None) -> dict:
     """从生成 payload 抽出后处理选项。
 
-    缺省全部开启 —— 与 omnivoice-studio 的默认一致（那边三个开关默认都勾）。
-    前端显式传 ``false`` 才关；传了 ``postprocess: false`` 则整组关掉
-    （给脚本化调用留一个「我全都要原始音频」的短路径）。
+    默认全部关闭，只有显式开启才处理。``postprocess: true`` 可作为整组开关，
+    ``pp_silence`` / ``pp_normalize`` / ``pp_fade`` 仍可逐项覆盖；
+    ``postprocess: false`` 则强制整组关闭。
     """
     p = p or {}
     if p.get("postprocess") is False:
         return {"silence": False, "normalize": False, "fade": False,
                 "mid_ms": MID_SIL_MS, "edge_ms": EDGE_SIL_MS, "target_db": TARGET_DB}
+    enabled = p.get("postprocess") is True
     return {
-        "silence": bool(p.get("pp_silence", True)),
-        "normalize": bool(p.get("pp_normalize", True)),
-        "fade": bool(p.get("pp_fade", True)),
+        "silence": bool(p.get("pp_silence", enabled)),
+        "normalize": bool(p.get("pp_normalize", enabled)),
+        "fade": bool(p.get("pp_fade", enabled)),
         "mid_ms": _int_in(p.get("pp_mid_ms"), MID_SIL_MS, 100, 3000),
         "edge_ms": _int_in(p.get("pp_edge_ms"), EDGE_SIL_MS, 0, 1000),
         "target_db": _float_in(p.get("pp_target_db"), TARGET_DB, -40.0, -6.0),

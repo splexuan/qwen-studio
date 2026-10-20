@@ -413,6 +413,11 @@ input[type=checkbox]{width:15px; height:15px; accent-color:var(--accent); cursor
 .switchrow__t{min-width:0; flex:1}
 .switchrow__t b{display:block; font-size:var(--fs-sm); font-weight:600}
 .switchrow__t span{display:block; font-size:var(--fs-xs); color:var(--text-3); margin-top:2px; line-height:1.6}
+/* 标点 / 指令预设：一排小按钮。用 flex-wrap 而不是横向滚动 ——
+   手机上横滑很容易和页面本身的纵向手势打架，换行反而每个都点得到。 */
+.presetrow{display:flex; align-items:center; flex-wrap:wrap; gap:var(--s-2); margin-top:var(--s-3)}
+.presetrow > .hint{flex:0 0 auto; margin:0}
+.presetrow .btn{flex:0 0 auto}
 
 /* 输出后处理：每项一个勾 + 一句说明上下叠。说明里的数字框要能塞进一行文字，
    所以单独把高度压到 28px —— 用默认 40px 的 .input 会把行距撑开、读起来断成两截。 */
@@ -1526,7 +1531,7 @@ a.btn{text-decoration:none}
         <header class="pagehead">
           <div class="pagehead__t">
             <h1>语音克隆</h1>
-            <p>拿一段几秒的参考音频复刻音色，再用自由文本描述情绪与语气。</p>
+            <p>拿一段几秒的参考音频复刻音色，再用文本微调语气 —— 能改音量、语速和停顿，但不会换一个人。</p>
           </div>
           <div class="pagehead__act">
             <button class="btn btn--outline btn--sm" data-goto="library">管理音色库</button>
@@ -1547,6 +1552,18 @@ a.btn{text-decoration:none}
               <div class="card__body">
                 <textarea class="textarea" id="c-text" rows="6"
                   placeholder="输入或粘贴要朗读的内容。多长都行 —— 会按句自动切段后拼成一条音频…"></textarea>
+                <!-- 实测标点是比形容词更省力的情绪杠杆（见 syncInstructTip 的测量数据），
+                     所以把它放在正文旁边当工具，而不是只写一句「请加标点」的提示。
+                     光标处插入，保留浏览器撤销栈：execCommand 失败才退回 setRangeText。 -->
+                <div class="presetrow" id="c-punct" role="group" aria-label="插入标点">
+                  <span class="hint">标点工具</span>
+                  <button class="btn btn--ghost btn--sm" type="button" data-punct="——"
+                          title="在光标处插入破折号：拖长句尾">—— 拖长</button>
+                  <button class="btn btn--ghost btn--sm" type="button" data-punct="……"
+                          title="在光标处插入省略号：留一个停顿">…… 停顿</button>
+                  <button class="btn btn--ghost btn--sm" type="button" data-punct="！"
+                          title="在光标处插入感叹号：加重语气">！ 加重</button>
+                </div>
                 <p class="hint mt" id="c-est">不限字数。开始输入后这里会给出「几段 · 多长 · 大概等多久」的预估。</p>
               </div>
             </div>
@@ -1585,7 +1602,7 @@ a.btn{text-decoration:none}
 
                   <div class="field mt">
                     <div class="row-between">
-                      <label for="c-ref-text">参考音频说的字 <span class="lbl-opt">（完整 ICL 模式下必填）</span></label>
+                      <label for="c-ref-text">参考音频说的字 <span class="lbl-req">必填</span></label>
                       <span id="c-asr-slot"></span>
                     </div>
                     <textarea class="textarea textarea--slim" id="c-ref-text" rows="2"
@@ -1594,7 +1611,10 @@ a.btn{text-decoration:none}
                   </div>
 
                   <div class="row-between mt">
-                    <button class="btn btn--outline btn--sm" id="c-save">存进音色库</button>
+                    <span class="row-fill">
+                      <button class="btn btn--outline btn--sm" id="c-save">存进音色库</button>
+                      <button class="btn btn--ghost btn--sm" id="c-clear" type="button" hidden>移除</button>
+                    </span>
                     <span class="hint" id="c-up-note"></span>
                   </div>
                 </div>
@@ -1622,8 +1642,17 @@ a.btn{text-decoration:none}
               <div class="card__body">
                 <textarea class="textarea" id="c-instruct" rows="3"
                   placeholder="例如：压低声音，语速偏慢，带一点克制的疲惫感。喘气声别太重。"></textarea>
+                <div class="presetrow" id="c-instr-presets" role="group" aria-label="指令写法参考">
+                  <span class="hint">写法参考</span>
+                  <button class="btn btn--ghost btn--sm" type="button" data-instr="音量克制，语速偏慢，句尾微微发颤，气息不稳，长句中间停一下">隐忍</button>
+                  <button class="btn btn--ghost btn--sm" type="button" data-instr="音量不大但压得很低，语速慢，重音落在每句头两个字，句尾往下沉，带一点气声，字间停顿明显">冷笑</button>
+                  <button class="btn btn--ghost btn--sm" type="button" data-instr="音量小，语速慢，句尾往上飘并拖长，气息断续，字与字之间发黏">哀求</button>
+                  <button class="btn btn--ghost btn--sm" type="button" data-instr="音量很大近似吼叫，语速偏快但每个字咬得很重，句尾向上扬起，气息粗重，停顿短促">怒吼</button>
+                </div>
                 <p class="hint mt">这段文字会原样包成一个对话轮次喂给模型，不是关键词匹配 ——
                   越具体、越像在给演员说戏，效果越稳。留空即中性朗读。</p>
+                <p class="hint mt" id="c-emotion-note">当前是 Base 权重，情绪指令只提供软引导，
+                  幅度有限 —— 想从平静直接变成崩溃，多半会失望。先把标点改出停顿和拖腔，再写具体动作。</p>
                 <p class="hint hint--warn mt" id="c-instr-tip" hidden></p>
               </div>
             </div>
@@ -2238,7 +2267,7 @@ let BOOT = {};            // /api/bootstrap 的结果
 let VOICES = [];          // 音色库列表（rows）
 let DOCS = null;          // /api/docs 的结果
 const STATE = {           // 各视图的即时状态
-  clone: { src: "lib", voice: "", upload: null, xvec: true },
+  clone: { src: "lib", voice: "" },
   design: { instruct: "" },
   official: { speaker: "vivian" },
   script: { roles: [] },
@@ -2585,6 +2614,12 @@ function buildPlayer(host, opts = {}) {
 function createEditor(host, opts = {}) {
   const minSecs = BOOT.limits?.ref_min_secs ?? 2.0;
   const goodMax = BOOT.limits?.ref_good_max_secs ?? 12.0;
+  // 长音频默认只框「能量最高的一段」：整段 30 分钟不仅超模型上限，
+  // 而且波形上一个像素好几秒，拖拽根本对不准。opts.autoTrim 只在
+  // 「新上传」时打开；编辑已有音色必须保留原来的整段选区。
+  const autoTrim = !!opts.autoTrim;
+  const targetSpan = Math.min(goodMax, Math.max(minSecs + 1, Number(opts.pickSecs) || 10));
+  const pickLabel = `取 ${Math.round(targetSpan)} 秒`;
   host.innerHTML = `
     <div class="editor">
       <div class="ed-head">
@@ -2609,6 +2644,8 @@ function createEditor(host, opts = {}) {
         </button>
         <span class="ed-read" data-role="read">—</span>
         <span class="sp"></span>
+        ${autoTrim ? `<button class="btn btn--ghost btn--sm" data-role="pick"
+          title="从当前播放位置开始，取一段长度合适的音频">${pickLabel}</button>` : ""}
         <button class="btn btn--ghost btn--sm" data-role="all">全选</button>
         ${opts.saveLabel ? `<button class="btn btn--outline btn--sm" data-role="save">${esc(opts.saveLabel)}</button>` : ""}
       </div>
@@ -2733,27 +2770,78 @@ function createEditor(host, opts = {}) {
   audio.addEventListener("ended", stopPlay);
   audio.addEventListener("pause", () => { el.icon.innerHTML = ICON_PLAY; el.play.classList.remove("on"); cancelAnimationFrame(rafId); });
   $('[data-role=all]', host)?.addEventListener("click", () => { a = 0; b = dur; readout(); });
+  $('[data-role=pick]', host)?.addEventListener("click", () => {
+    if (!dur) return;
+    const span = Math.min(targetSpan, dur);
+    const from = clamp(audio.currentTime || 0, 0, Math.max(0, dur - span));
+    a = from; b = Math.min(dur, from + span); readout();
+  });
   $('[data-role=save]', host)?.addEventListener("click", () => {
     opts.onSave?.({ start: a, end: b, duration: dur, buffer: buf, url: audio.src });
   });
 
+  /* 在峰值里找能量最高的一段。peaks 是 [min,max] 对，用峰峰值近似响度；
+     滑窗只看平均能量，不区分人声/音乐 —— 作为「先框个大概」足够了，
+     框完仍然让人自己试听确认。 */
+  function bestWindow(span) {
+    if (!peaks?.length || dur <= span) return [0, dur];
+    const n = peaks.length;
+    const buckets = Math.max(1, Math.min(n, Math.round((span / dur) * n)));
+    const amp = (i) => peaks[i][1] - peaks[i][0];
+    let sum = 0;
+    for (let i = 0; i < buckets; i++) sum += amp(i);
+    let best = sum, bi = 0;
+    for (let i = buckets; i < n; i++) {
+      sum += amp(i) - amp(i - buckets);
+      if (sum > best) { best = sum; bi = i - buckets + 1; }
+    }
+    const start = (bi / n) * dur;
+    return [start, Math.min(dur, start + span)];
+  }
+
   function load(url, title) {
     el.name.textContent = title || "参考音频";
     el.wave.classList.remove("nodata");
+    el.note.textContent = "";
     audio.src = url;
     peaks = null; dur = 0;
-    decodeAudio(url).then((bf) => {
-      buf = bf; dur = bf.duration; a = 0; b = dur;
+    el.len.textContent = "解码中…";
+    return decodeAudio(url).then((bf) => {
+      buf = bf; dur = bf.duration;
       peaks = computePeaks(bf, Math.max(40, Math.min(900, Math.round(el.wave.clientWidth / 2.4))));
+      // 只有在「新上传 + 超长」时才自动框选；短音频、编辑已有音色都保持整段。
+      if (autoTrim && dur > goodMax) {
+        const w = bestWindow(targetSpan); a = w[0]; b = w[1];
+      } else { a = 0; b = dur; }
       el.len.textContent = dur.toFixed(2) + "s";
       redraw(); readout(); paintWave(el.canvas, peaks); layout();
+      return { duration: dur };
     }).catch(() => {
       el.len.textContent = "读取失败"; el.wave.classList.add("nodata");
+      return null;               // 不抛：调用方没有 await，抛出去会触发全局错误页
     });
-    el.len.textContent = "解码中…";
   }
 
-  return { load, stopPlay, get selection() { return { start: a, end: b, duration: dur }; } };
+  /* 清空编辑器。上传件被「移除」时必须连声音一起停，否则节点隐藏后
+     那段 Audio 还会继续响，而且界面上已经没有暂停按钮了。 */
+  function reset() {
+    stopPlay();
+    try { audio.removeAttribute("src"); audio.load(); } catch (_) {}
+    buf = null; peaks = null; dur = 0; a = 0; b = 0;
+    el.name.textContent = "参考音频"; el.len.textContent = "—";
+    el.wave.classList.add("nodata"); el.note.textContent = "";
+    el.read.textContent = "—";
+    el.sel.style.left = "0"; el.sel.style.width = "0";
+    el.dim0.style.width = "0"; el.dim1.style.left = "0"; el.dim1.style.width = "0";
+    el.h0.style.left = "0"; el.h1.style.left = "0";
+    paintWave(el.canvas, []);
+  }
+
+  return {
+    load, reset, stopPlay,
+    get ready() { return dur > 0; },
+    get selection() { return { start: a, end: b, duration: dur }; },
+  };
 }
 
 /* ============================================================================
@@ -2812,6 +2900,9 @@ const ORB = `<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke=
   stroke-width="1.7" stroke-linecap="round"><path d="M12 2v20M7 7v10M17 7v10M3 11v2M21 11v2"/></svg>`;
 
 function createResult(host, { prefix = "", goLabel = "生成语音" } = {}) {
+  // 权重没驻留时，第一条的等待里有一大截是加载权重，不是「模型慢」。
+  // 这句话把预期说在前面，省得用户以为卡死了。
+  const cold = !(BOOT.model_status || {}).loaded && !(BOOT.model_status || {}).loading;
   host.innerHTML = `
     <div class="card card--lift">
       <div class="card__head">
@@ -2820,7 +2911,7 @@ function createResult(host, { prefix = "", goLabel = "生成语音" } = {}) {
       </div>
       <div class="result__idle" data-role="idle">
         <span class="orb">${ORB}</span>
-        <p>填好左侧内容后点「生成语音」。<br>首次生成要加载权重，之后同规格会复用。</p>
+        <p>填好左侧内容后点「生成语音」。<br>首次生成要加载权重，之后同规格会复用。${cold ? "<br>当前还没有驻留权重，第一条会先在「加载权重」停几十秒。" : ""}</p>
       </div>
       ${prefix === "c" || prefix === "o" ? `
       <label class="streamsw">
@@ -3421,8 +3512,8 @@ function syncPPDefaults() {
 }
 
 /* 塞进每次生成的 payload。
-   全关时也必须把四个 false 一起发出去 —— 后端只认「显式传了 false」，
-   不发就会按默认全开处理，用户明明关了却拿到处理过的音频。 */
+   四个字段始终显式发送 —— 不依赖后端缺省值，也避免用户改了一两项后
+   其余开关被服务端默认值悄悄补上。 */
 function ppPayload() {
   return {
     pp_silence: !!PP_STATE.silence,
@@ -3582,7 +3673,7 @@ function renderAdv(prefix, notes = []) {
       <summary>输出后处理<span class="acc__note">去静音 · 归一化 · 淡入淡出</span></summary>
       <div class="acc__body">
         <p class="hint" style="margin:0 0 var(--s-3)">
-          合成完、写盘前统一整理一遍。默认三项全开；全关掉拿到的就是模型原样。
+          合成完、写盘前统一整理一遍。默认三项关闭；逐项开启后才会处理，全关时拿到的是模型原样。
           <b>「边生成边播」时不生效</b> —— 那种模式下音频是边生成边播出去的，
           事后处理会让下载到的和刚听到的不是同一条。
         </p>
@@ -3662,6 +3753,13 @@ function pickVoice({ title = "选择音色", hint = "", current = "" } = {}) {
     const m = openModal({
       title,
       body: `${hint ? `<p class="apidesc">${esc(hint)}</p>` : ""}
+        ${(() => {
+          const rs = recentVoices();
+          return rs.length
+            ? `<div class="presetrow" id="__pr"><span class="hint">最近用过</span>${rs.map((n) =>
+                `<button type="button" class="btn btn--ghost btn--sm" data-recent="${esc(n)}">${esc(n)}</button>`).join("")}</div>`
+            : "";
+        })()}
         <div class="row-fill">
           <input class="input" id="__pq" type="search" autocomplete="off"
                  placeholder="按音色名筛选，打几个字就行（模糊匹配）">
@@ -3726,6 +3824,12 @@ function pickVoice({ title = "选择音色", hint = "", current = "" } = {}) {
       if (!b) return;
       m.close();
       resolve(b.dataset.name);
+    });
+    m.$("#__pr")?.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-recent]");
+      if (!b) return;
+      m.close();
+      resolve(b.dataset.recent);
     });
     m.$("#__pq").addEventListener("input", () => { q = m.$("#__pq").value; paint(); });
     // 回车就选最靠上的那个 —— 打完几个字直接敲回车比再挪手去点更快，
@@ -3952,7 +4056,7 @@ function modePillHTML(v) {
   // 只有「参考文本必须逐字写准」的完整 ICL 才用警示色。
   // 默认的仅向量是中性标签，不该也跳出来抢注意力。
   return v.xvec_only
-    ? `<span class="pill" title="只用说话人向量：只取音色、不学参考音频的语调；不需要参考文本，切换语种更干净">仅向量</span>`
+    ? `<span class="pill" title="只用说话人向量：只取音色、不学参考音频的语调；生成时不依赖参考文本，切换语种更干净">仅向量</span>`
     : `<span class="pill pill--warn" title="完整 ICL：连参考音频的韵律一起学；参考文本必须逐字写准，写错会污染输出">完整 ICL</span>`;
 }
 
@@ -3982,9 +4086,46 @@ function syncVoiceCache() {
   // 所以统一由 renderLibrarySummary 出，这里只负责把缓存换掉。
 }
 
+/* 上次选的音色跨刷新记住。只存名字，不存「临时上传」——
+   上传件是会话里的临时文件，刷新后本来就没了，记住那个来源只会得到一块空面板。 */
+const CLONE_SEL_KEY = "qs-clone-sel";
+const CLONE_RECENT_KEY = "qs-clone-recent";
+function saveCloneSel() {
+  try {
+    const name = STATE.clone.voice || "";
+    localStorage.setItem(CLONE_SEL_KEY, JSON.stringify({ voice: name }));
+    // 顺手记一条「最近用过」。只存名字，boot 时和 VOICES 对一遍，
+    // 删掉的音色不会变成点不开的死链。
+    if (name) {
+      const old = JSON.parse(localStorage.getItem(CLONE_RECENT_KEY) || "[]");
+      const arr = Array.isArray(old) ? old.filter((x) => typeof x === "string" && x !== name) : [];
+      arr.unshift(name);
+      localStorage.setItem(CLONE_RECENT_KEY, JSON.stringify(arr.slice(0, 6)));
+    }
+  } catch (_) { /* 隐私模式下存不了，不影响使用 */ }
+}
+function recentVoices() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(CLONE_RECENT_KEY) || "[]");
+    if (!Array.isArray(arr)) return [];
+    return arr.filter((n) => VOICES.some((v) => v.name === n)).slice(0, 5);
+  } catch (_) { return []; }
+}
+function restoreCloneSel() {
+  try {
+    const s = JSON.parse(localStorage.getItem(CLONE_SEL_KEY) || "{}") || {};
+    if (typeof s.voice === "string" && VOICES.some((v) => v.name === s.voice)) {
+      STATE.clone.voice = s.voice;
+    }
+  } catch (_) { /* 存坏了就从空开始 */ }
+}
+
 /* 选音色 = 一个按钮 + 一个弹窗（见 pickVoice）。
    当前选中的那个显示在按钮上，库里有什么、怎么筛，都在弹窗里解决。 */
+let _clonePreview = null;             // 克隆页音色试听器；重渲染前先停掉，别让旧声音继续响
 function renderCloneVoice() {
+  try { _clonePreview?.audio.pause(); } catch (_) {}
+  _clonePreview = null;
   const host = $("#c-pick-host");
   if (!VOICES.length) {
     host.innerHTML = `<div class="empty" style="padding:var(--s-6) var(--s-2)">
@@ -3995,7 +4136,7 @@ function renderCloneVoice() {
   const v = VOICES.find((x) => x.name === STATE.clone.voice);
   // 音色可能已经被删掉了。留着那个名字的话，按钮上会显示一个库里并不存在的音色，
   // 一直到点了生成才报「先选一个音色」—— 不如当场清掉。
-  if (!v && STATE.clone.voice) STATE.clone.voice = "";
+  if (!v && STATE.clone.voice) { STATE.clone.voice = ""; saveCloneSel(); }
 
   host.innerHTML = `
     <button type="button" class="pickbtn" id="c-pick">
@@ -4012,9 +4153,13 @@ function renderCloneVoice() {
     });
     if (!name) return;
     STATE.clone.voice = name;
+    saveCloneSel();
     renderCloneVoice();
+    // 重选同一个音色也当作「重新同步一次」：用户可能刚在音色库里改过克隆方式。
+    syncXvecToVoice(VOICES.find((x) => x.name === name), { force: true });
   });
   syncXvecToVoice(v);
+  const refMissing = !!v && !v.xvec_only && !String(v.ref_text || "").trim();
   $("#c-lib-detail").innerHTML = v ? `
     <div class="voice-preview">
       <div class="row-between">
@@ -4024,19 +4169,44 @@ function renderCloneVoice() {
           · 克隆方式 <b>${modeText(v)}</b>
           ${v.has_prompt ? " · 基因 <b>已生成</b>" : ""}
         </span>
-        ${v.has_prompt ? "" : `<button class="btn btn--soft btn--sm" data-role="gen">生成音色基因</button>`}
+        <span class="row-fill">
+          <button class="btn btn--ghost btn--sm" data-role="edit-ref">改参考文本</button>
+          ${v.has_prompt || refMissing ? "" : `<button class="btn btn--soft btn--sm" data-role="gen">生成音色基因</button>`}
+        </span>
       </div>
       <div data-role="player"></div>
       <div class="notes" style="padding:0" data-role="note"></div>
     </div>` : "";
 
   if (v) {
-    const ph = $('[data-role=player]', $("#c-lib-detail"));
+    const detail = $("#c-lib-detail");
+    const ph = $('[data-role=player]', detail);
     const pl = buildPlayer(ph, { download: false });
     pl.setURL(voiceURL(v.name));
-    const gen = $('[data-role=gen]', $("#c-lib-detail"));
+    _clonePreview = pl;
+    const note = $('[data-role=note]', detail);
+    if (refMissing) {
+      note.innerHTML = noteHTML("这个音色存的是<b>完整 ICL</b>，但参考文本是空的 ——"
+        + "完整 ICL 没法用，直接生成只会报错。补上文本，或这一次改用仅向量。", "warn")
+        + `<div class="row-fill mt">
+             <button class="btn btn--outline btn--sm" data-role="edit-ref">补参考文本</button>
+             <button class="btn btn--ghost btn--sm" data-role="force-xvec">这一次改用仅向量</button>
+           </div>`;
+    }
+    const preview = $(".voice-preview", detail);
+    preview.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-role]");
+      if (!b) return;
+      if (b.dataset.role === "edit-ref") openRefText(v.name);
+      if (b.dataset.role === "force-xvec") {
+        $("#c-xvec").checked = true;
+        syncXvecHint();
+        note.innerHTML = noteHTML("这一次会走仅说话人向量：不依赖参考文本，音色相似度会低一些。"
+          + "想长期这样用，去音色库把这个音色改成仅向量。", "info");
+      }
+    });
+    const gen = $('[data-role=gen]', detail);
     if (gen) gen.addEventListener("click", async () => {
-      const note = $('[data-role=note]', $("#c-lib-detail"));
       gen.disabled = true;
       note.innerHTML = noteHTML("正在抽取音色基因（要加载模型），几十秒内完成…", "info");
       try {
@@ -4079,11 +4249,14 @@ function initUploadPane() {
          <span>wav / mp3 / m4a / flac / ogg，建议 ${BOOT.limits?.ref_min_secs ?? 2}–${BOOT.limits?.ref_good_max_secs ?? 12} 秒干净人声</span>`;
     $("#c-drop").classList.toggle("has", !!u);
     $("#c-save").disabled = !u;
+    $("#c-clear").hidden = !u;
   };
   showUploadState();
 
   const pick = () => $("#c-file").click();
-  $("#c-drop").addEventListener("click", (e) => { if (e.target.id !== "c-drop") return; pick(); });
+  // 点在图标或文字上也算点上传框。以前只认 e.target.id === "c-drop"，
+  // 而图标/文字都在子节点里 —— 用户点最显眼的那块反而没反应。
+  $("#c-drop").addEventListener("click", pick);
   $("#c-drop").addEventListener("dragover", (e) => { e.preventDefault(); $("#c-drop").classList.add("over"); });
   $("#c-drop").addEventListener("dragleave", () => $("#c-drop").classList.remove("over"));
   $("#c-drop").addEventListener("drop", (e) => {
@@ -4097,49 +4270,127 @@ function initUploadPane() {
     $("#c-file").value = "";
   });
 
+  /* 带进度的上传。fetch 没有上传进度事件，而一段几十秒的音频在机械盘 /
+     手机上可能要等十几秒 —— 只写「正在上传…」会让人以为卡死。 */
+  function uploadWithProgress(file, onPct) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/upload");
+      xhr.responseType = "json";
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onPct(Math.round((e.loaded / e.total) * 100));
+      };
+      xhr.onload = () => {
+        let d = xhr.response;
+        if (!d) { try { d = JSON.parse(xhr.responseText || "{}"); } catch (_) { d = {}; } }
+        if (xhr.status >= 200 && xhr.status < 300 && d.ok !== false) resolve(d);
+        else reject(new Error(d.error || `上传失败（HTTP ${xhr.status}）`));
+      };
+      xhr.onerror = () => reject(new Error("上传失败：网络中断"));
+      xhr.onabort = () => reject(new Error("上传已取消"));
+      const fd = new FormData();
+      fd.append("file", file, file.name);
+      xhr.send(fd);
+    });
+  }
+
   async function doUpload(file) {
-    const fd = new FormData();
-    fd.append("file", file, file.name);
+    if (!file.size) { toast("这个文件是空的，换一个试试", "warn"); return; }
+    if (file.size > 300 * 1024 * 1024) {
+      toast("文件超过 300 MB，先剪短或转成 mp3 再上传", "warn");
+      return;
+    }
+    if (file.size > 80 * 1024 * 1024) {
+      toast("文件较大，上传和解码会慢一些；参考音频几秒到十几秒就够了", "warn");
+    }
     $("#c-drop-t").innerHTML = `<b>正在上传…</b><span>${esc(file.name)}</span>`;
+    $("#c-drop").disabled = true;
     try {
-      const r = await api("/api/upload", { method: "POST", body: fd });
+      const r = await uploadWithProgress(file, (pct) => {
+        $("#c-drop-t").innerHTML = `<b>正在上传 ${pct}%…</b><span>${esc(file.name)}</span>`;
+      });
       _uploadInfo = r;
-      STATE.clone.upload = r.name;
       showUploadState();
       $("#c-editor").classList.remove("hidden");   // 有音频了才把波形编辑器放出来
-      _cloneEditor.load(r.url, r.original || r.name);
+      _cloneEditor.load(r.url, r.original || r.name).then((res) => {
+        if (!res) {
+          // 服务端能收、浏览器解不开（少见，但坏文件/怪编码会这样）：
+          // 没有波形就没有选区，别让「存进音色库」亮着骗人去点。
+          note.textContent = "这段音频浏览器解不开，换一个文件或先转成 wav / mp3。";
+          $("#c-save").disabled = true;
+        }
+      });
       const lo = BOOT.limits?.ref_min_secs ?? 2, hi = BOOT.limits?.ref_good_max_secs ?? 12;
-      note.textContent = (r.duration < lo || r.duration > hi)
-        ? `这段 ${r.duration.toFixed(2)}s 不在建议区间（${lo}–${hi}s），建议在波形上拖选出气口完整的一段再存。`
-        : "长度合适。存进音色库后就能反复使用。";
+      note.textContent = r.duration > hi
+        ? `整段 ${r.duration.toFixed(2)}s 偏长，已自动框出能量最高的一段；试听确认，不对就拖选区或点「取 ${Math.round(Math.min(hi, Math.max(lo + 1, 10)))} 秒」。`
+        : (r.duration < lo
+          ? `这段 ${r.duration.toFixed(2)}s 短于建议下限 ${lo}s —— 音色会不稳，容易被参考音频的咬字带走。`
+          : "长度合适。存进音色库后就能反复使用。");
       toast("参考音频已就绪", "ok");
     } catch (e) {
-      _uploadInfo = null; STATE.clone.upload = null;
       showUploadState();
       toast(e.message, "err");
-    }
+    } finally { $("#c-drop").disabled = false; }
   }
 
   $("#c-save").addEventListener("click", async () => {
     if (!_uploadInfo) return;
-    const name = await promptName("把这段参考音频存成音色", "");
-    if (!name) return;
     const sel = _cloneEditor.selection;
+    // 解码是异步的：刚上传完就点保存，duration 可能还是 0。以前会把 0–0
+    // 传给服务端，报一个和「参考文本」毫不相干的「参考音频太短」。
+    if (!(sel.duration > 0) || !(sel.end > sel.start)) {
+      toast("波形还在解码，等半秒再存", "warn");
+      return;
+    }
+    // 后端存库时参考文本是硬性必填（哪怕这个音色只打算用向量）——
+    // 与其让请求跑一圈被拒，不如在这里当场说清楚。
+    const refText = $("#c-ref-text").value.trim();
+    if (!refText) {
+      toast("参考文本必填 —— 请逐字照抄这段音频里说的话；只做临时生成时才能不填", "warn");
+      $("#c-ref-text").focus();
+      return;
+    }
+    const base = (_uploadInfo.original || _uploadInfo.name || "").replace(/\.[^.]+$/, "").slice(0, 40);
+    const name = await promptName("把这段参考音频存成音色", base);
+    if (!name) return;
+    const btn = $("#c-save");
+    btn.disabled = true;
     try {
       const r = await postVoice({
         name, upload: _uploadInfo.name,
-        ref_text: $("#c-ref-text").value.trim(),
+        ref_text: refText,
         xvec_only: $("#c-xvec").checked,
         start: sel.start, end: sel.end,
       });
-      await refreshVoices();
+      // 先切状态再刷新：refreshVoices() 内部会调 renderCloneVoice()，
+      // 状态晚一步的话，新存的音色不会出现在「当前音色」上。
       STATE.clone.src = "lib";
       STATE.clone.voice = r.name;
+      saveCloneSel();
       setCloneSrc("lib");
+      await refreshVoices();
       toast(r.replaced ? "同名已覆盖" : `已保存音色「${r.name}」`, "ok");
-      // 不 await：基因是后台任务，别让它把「保存」这个动作拖住
-      followGeneJob(r.job, null);
     } catch (e) { toast(e.message, "err"); }
+    finally { btn.disabled = !_uploadInfo; }
+  });
+
+  $("#c-clear").addEventListener("click", async () => {
+    if (!_uploadInfo) return;
+    if ($("#c-ref-text").value.trim()) {
+      const ok = await askConfirm({
+        title: "移除这段临时音频？",
+        body: `<p class="apidesc">会清掉当前选段和已转写的参考文本。已经存进音色库的音色不受影响。</p>`,
+        okLabel: "移除",
+      });
+      if (!ok) return;
+    }
+    _cloneEditor.reset();
+    _uploadInfo = null;
+    $("#c-editor").classList.add("hidden");
+    $("#c-ref-text").value = "";
+    note.textContent = "";
+    showUploadState();
+    toast("已移除临时音频", "ok");
   });
 
   // 转写「当前选区」而不是整个文件 —— 保存音色时用的也是这个选区，
@@ -4246,7 +4497,7 @@ function suggestVoiceName(desc) {
 function syncXvecHint() {
   const on = $("#c-xvec").checked;
   $("#c-ref-hint").textContent = on
-    ? "当前是「只用说话人向量」，参考文本可以不填。"
+    ? "当前是「只用说话人向量」：临时生成时参考文本可以不填；但存进音色库仍要填 —— 以后想切回完整 ICL 或抽音色基因，都要靠它。"
     : "当前是完整 ICL 模式 —— 这里必须逐字写准，写错会直接影响输出。";
   syncInstructTip();
 }
@@ -4289,13 +4540,63 @@ function syncInstructTip() {
 /* 选中音色库的音色时，把「只用说话人向量」同步成这个音色保存时的设置。
    不做这一步的话，复选框会一直停在自己的默认值上，把音色存的设置悄悄覆盖掉 ——
    一个存为「完整 ICL」的音色，用起来其实是「仅向量」。
-   同步之后仍可当场改（这是每一次生成的开关），只是初值跟着音色走。 */
-function syncXvecToVoice(v) {
+   同步之后仍可当场改（这是每一次生成的开关），只是初值跟着音色走。
+   **只在「换了一个音色」时同步**：renderCloneVoice 每次保存/刷新都会重画，
+   若无条件同步，用户刚手动勾好的「这一次用向量」会被悄悄改回去。 */
+let _xvecSyncedVoice = "";
+function syncXvecToVoice(v, { force = false } = {}) {
   if (!v || typeof v.xvec_only !== "boolean") return;
+  const key = `${v.name}:${v.mtime || 0}`;   // 音频被重新上传后 mtime 会变，跟着重新同步
+  if (!force && _xvecSyncedVoice === key) return;
+  _xvecSyncedVoice = key;
   const box = $("#c-xvec");
-  if (!box || box.checked === v.xvec_only) return;
+  if (!box) return;
   box.checked = v.xvec_only;
+  // 值没变也要重画提示：从「完整 ICL 音色（手动切到向量）」换到
+  // 「本身就是向量的音色」时，复选框前后都是 true，但提示仍是上一句的。
   syncXvecHint();
+}
+
+/* 在克隆页直接补 / 改音色的参考文本，不用跳去音色库找那张卡。
+   走 /api/voices/{name}/text：只改文本，不重写音频、不作废基因。 */
+function openRefText(name) {
+  const v = VOICES.find((x) => x.name === name);
+  if (!v) { toast("这个音色已经不在库里了", "warn"); return; }
+  const m = openModal({
+    title: `参考文本 · ${v.name}`,
+    body: `<p class="apidesc">逐字照抄这段参考音频里说的话，不要改写。完整 ICL 下写错会直接污染输出；
+        仅向量音色可以留空。</p>
+      <div class="row-between mt">
+        <label for="__rt">参考文本</label>
+        <span id="__rt-asr"></span>
+      </div>
+      <textarea class="textarea mt" id="__rt" rows="4"
+        placeholder="参考音频里说了什么，就照抄什么">${esc(v.ref_text || "")}</textarea>
+      <div id="__rt-note"></div>`,
+    foot: `<button class="btn btn--ghost" data-role="no">取消</button>
+           <button class="btn btn--primary" data-role="yes">保存</button>`,
+  });
+  const ta = m.$("#__rt"), note = m.$("#__rt-note"), yes = m.$('[data-role=yes]');
+  const syncYes = () => { yes.disabled = !v.xvec_only && !ta.value.trim(); };
+  ta.addEventListener("input", syncYes);
+  syncYes();
+  if (!v.xvec_only && !ta.value.trim()) {
+    note.innerHTML = noteHTML("这个音色是完整 ICL，文本不能为空；不确定就点「自动转写」再核对。", "warn");
+  }
+  const asr = makeTranscribeBtn((btn) => doTranscribe(btn, { voice: name }, ta, note));
+  m.$("#__rt-asr").appendChild(asr);
+  m.$('[data-role=no]').addEventListener("click", () => m.close());
+  yes.addEventListener("click", async () => {
+    const text = ta.value.trim();
+    if (!v.xvec_only && !text) { toast("完整 ICL 的参考文本不能为空", "warn"); ta.focus(); return; }
+    yes.disabled = true;
+    try {
+      await post(`/api/voices/${encodeURIComponent(name)}/text`, { ref_text: text });
+      m.close();
+      toast("参考文本已更新", "ok");
+      await refreshVoices();
+    } catch (e) { toast(e.message, "err"); yes.disabled = false; }
+  });
 }
 
 /* ---------------------------------------------------------------------------
@@ -4379,9 +4680,11 @@ function initClone() {
 
   _cloneEditor = createEditor($("#c-editor"), {
     saveLabel: "用这段存成音色",
+    autoTrim: true,                 // 长音频自动框一段，别把整段 30 分钟塞给模型
     onSave: () => $("#c-save").click(),
   });
 
+  restoreCloneSel();                // 刷新后回到上次选的音色；不存在的会被 render 清掉
   setCloneSrc("lib");
   $("#c-tab-lib").addEventListener("click", () => setCloneSrc("lib"));
   $("#c-tab-up").addEventListener("click", () => setCloneSrc("up"));
@@ -4409,10 +4712,40 @@ function initClone() {
     sync();
   });
 
+  // 标点工具：插在光标处。execCommand 会保留浏览器撤销栈；
+  // 不可用时退回 setRangeText（功能一样，只是撤不回，概率很低）。
+  const insertText = (txt) => {
+    const s = ta.selectionStart, e = ta.selectionEnd;
+    ta.focus();
+    ta.setSelectionRange(s, e);
+    let ok = false;
+    try { ok = document.execCommand("insertText", false, txt); } catch (_) { ok = false; }
+    if (!ok) {
+      ta.setRangeText(txt, s, e, "end");
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    sync();
+  };
+  $("#c-punct").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-punct]");
+    if (b) insertText(b.dataset.punct);
+  });
+
   const inst = bindDraft("#c-instruct");
   inst.addEventListener("input", syncInstructTip);
   inst.addEventListener("change", syncInstructTip);
   syncInstructTip();
+  $("#c-instr-presets").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-instr]");
+    if (!b) return;
+    const txt = b.dataset.instr;
+    const cur = inst.value.trim();
+    if (cur.includes(txt)) { toast("这条已经在指令里了", "warn"); return; }
+    inst.value = cur ? cur.replace(/[；;，,。\s]+$/, "") + "；" + txt : txt;
+    inst.dispatchEvent(new Event("input", { bubbles: true }));
+    inst.focus();
+    inst.setSelectionRange(inst.value.length, inst.value.length);
+  });
 
   // 这页原来有一句「生成期间可以继续编辑，结果会自己刷新」—— 前半句是真的，
   // 后半句是假的：payload 是点按钮那一刻的快照，生成期间改文本不会影响这一条结果。
@@ -4457,6 +4790,13 @@ function initClone() {
     };
     if (STATE.clone.src === "lib") {
       if (!STATE.clone.voice) { toast("先选一个音色", "warn"); return; }
+      const v = VOICES.find((x) => x.name === STATE.clone.voice);
+      // 老音色可能是「完整 ICL + 空参考文本」的组合：不拦的话要等任务跑起来
+      // 才在后端报错，而且报的是模型层的异常。这里提前说清楚，并给出两条出路。
+      if (!payload.xvec_only && v && !String(v.ref_text || "").trim()) {
+        toast("这个音色是完整 ICL，但还没有参考文本 —— 先补文本，或勾上「只用说话人向量」", "warn");
+        return;
+      }
       payload.voice = STATE.clone.voice;
     } else {
       if (!_uploadInfo) { toast("先上传一段参考音频", "warn"); return; }
@@ -6197,7 +6537,10 @@ function openNewVoiceDialog(opts = {}) {
   // 「用这段保存」只是把同一个动作说两遍。保存时取的就是**当前选区**
   // （见下面 yes 的点击处理读 ed.selection），所以两者本来就等价。
   let nvAuto = null;            // 真正的自动转写器在下面挂完按钮才建，这里只留个引用
-  const ed = createEditor(m.$("#nv-editor"), { onRange: () => { if (up || isEdit) nvAuto?.poke(); } });
+  const ed = createEditor(m.$("#nv-editor"), {
+    autoTrim: !isEdit,              // 新上传的长音频自动框一段；编辑已有音色保持原选区
+    onRange: () => { if (up || isEdit) nvAuto?.poke(); },
+  });
   // 编辑模式：把「现在这一段」预载进来 —— 不换文件也能直接裁、直接改文本。
   // 走 voiceURL 拿的是带 mtime 的地址，不会拿到缓存里的旧音频。
   if (isEdit) {

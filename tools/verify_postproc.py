@@ -101,7 +101,11 @@ check("极短音频不会被淡没", float(np.abs(short).max()) > 0.1, f"peak={f
 print("4) 组合流程")
 x = np.concatenate([silence(1.2), tone(1.0, amp=0.04), silence(1.8), tone(1.0, amp=0.04), silence(1.0)])
 out, st = pp.apply(x, SR, pp.options({}))
-check("apply 默认三项全开", st["silence"] and st["normalize"] and st["fade"])
+check("默认三项全关", not st["silence"] and not st["normalize"] and not st["fade"])
+check("默认原样返回且不标记 applied", len(out) == len(x) and not st["applied"])
+
+out, st = pp.apply(x, SR, pp.options({"postprocess": True}))
+check("postprocess=true 三项全开", st["silence"] and st["normalize"] and st["fade"])
 check("时长明显收缩", len(out) / SR < 4.0, f"{len(x)/SR:.1f}s → {len(out)/SR:.1f}s")
 check("响度接近目标", abs(rms_db(out[int(0.2*SR):int(-0.2*SR)]) + 20.0) < 3.0,
       f"{rms_db(out[int(0.2*SR):int(-0.2*SR)]):.1f} dBFS")
@@ -112,7 +116,8 @@ check("summary 可读", len(pp.summary(st)) > 2, pp.summary(st))
 out, st = pp.apply(x, SR, pp.options({"postprocess": False}))
 check("postprocess=false 原样返回", len(out) == len(x) and not st["applied"])
 
-out, st = pp.apply(np.array([np.nan, 0.1, np.inf, -0.2], np.float32), SR, pp.options({}))
+out, st = pp.apply(np.array([np.nan, 0.1, np.inf, -0.2], np.float32), SR,
+                   pp.options({"postprocess": True}))
 check("NaN/inf 被清掉", bool(np.isfinite(out).all()), str(out[:4]))
 
 # ---------------------------------------------------------------------------
@@ -136,7 +141,7 @@ else:
             continue
         if getattr(x, "ndim", 1) > 1:
             x = x.mean(axis=1)
-        y, st = pp.apply(x, sr, pp.options({}))
+        y, st = pp.apply(x, sr, pp.options({"postprocess": True}))
         before, after = len(x) / sr, len(y) / sr
         peak = float(np.abs(y).max()) if len(y) else 0.0
         # 有声部分的响度前后各是多少
@@ -146,15 +151,18 @@ else:
             return float(np.median(v)) if len(v) else -180.0
         b_db, a_db = voiced_db(x), voiced_db(y)
         rows.append((f.name, before, after, st["cut_secs"], st["gain_db"], b_db, a_db))
+        # 峰值保护优先于响度目标：高动态素材可能只能小幅增益，
+        # 因此真实音频只要求不削波、不异常变长，且响度没有离目标更远。
         if not (len(y) > 0 and np.isfinite(y).all() and peak <= 0.9701
-                and after <= before + 0.25 and abs(a_db + 20.0) < 4.0):
+                and after <= before + 0.25
+                and abs(a_db + 20.0) <= abs(b_db + 20.0) + 0.05):
             ok = False
             print(f"  FAIL {f.name}: {before:.2f}s→{after:.2f}s peak={peak:.2f} "
                   f"响度 {b_db:.1f}→{a_db:.1f}")
     for name, b, a, cut, g, b_db, a_db in rows:
         print(f"  {name[:34]:<34} {b:5.2f}s → {a:5.2f}s   剪 {cut:4.1f}s   "
               f"增益 {g:+5.1f} dB   有声响度 {b_db:6.1f} → {a_db:6.1f} dBFS")
-    check("每条都：非空 / 无 NaN / 不削波 / 不长于原始", ok)
+    check("每条都：非空 / 无 NaN / 不削波 / 不异常变长 / 响度不倒退", ok)
     if rows:
         avg_cut = sum(r[3] for r in rows) / len(rows)
         moved = sum(1 for r in rows if abs(r[6] + 20.0) < abs(r[5] + 20.0))

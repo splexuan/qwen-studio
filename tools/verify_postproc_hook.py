@@ -37,30 +37,31 @@ def fake() -> tuple[np.ndarray, int]:
 
 core._gen_design = lambda text, lang, instr: fake()
 
-print("1) 默认（后处理全开）")
+print("1) 默认（后处理关闭）")
 wav, sr, status, level, pp = core.synthesize({
     "mode": "design", "text": "测试文本", "language": "Chinese",
 })
 check("返回 5 元组", sr == SR and level == "ok")
-check("音频被压短", len(wav) / sr < 4.5, f"{len(wav)/sr:.2f}s（原始 5.5s）")
-check("pp.applied", pp.get("applied") is True)
-check("剪掉≈2.6s", abs(pp.get("cut_secs", 0) - 2.6) < 0.3, f"{pp.get('cut_secs')}s")
-check("括号里有实际增益", abs(pp.get("gain_db", 0)) > 10, f"{pp.get('gain_db')} dB")
-check("状态行第二行讲清后处理", "后处理：" in status, status.splitlines()[1] if len(status.splitlines()) > 1 else status)
-check("不削波", float(np.abs(wav).max()) <= 0.9701, f"{float(np.abs(wav).max()):.3f}")
+check("音频原样", abs(len(wav) / sr - 5.5) < 0.05, f"{len(wav)/sr:.2f}s")
+check("pp.applied=false", pp.get("applied") is False, str(pp))
+check("状态行不写后处理", "后处理" not in status, status.splitlines()[-1])
 
-print("2) postprocess=false")
+print("2) postprocess=true（后处理全开）")
 wav2, _, status2, _, pp2 = core.synthesize({
-    "mode": "design", "text": "测试文本", "language": "Chinese", "postprocess": False,
+    "mode": "design", "text": "测试文本", "language": "Chinese", "postprocess": True,
 })
-check("音频原样", abs(len(wav2) / sr - 5.5) < 0.05, f"{len(wav2)/sr:.2f}s")
-check("pp.applied=false", pp2.get("applied") is False)
-check("状态行不写后处理", "后处理" not in status2, status2.splitlines()[-1])
+check("音频被压短", len(wav2) / sr < 4.5, f"{len(wav2)/sr:.2f}s（原始 5.5s）")
+check("pp.applied", pp2.get("applied") is True)
+check("剪掉≈2.6s", abs(pp2.get("cut_secs", 0) - 2.6) < 0.3, f"{pp2.get('cut_secs')}s")
+check("括号里有实际增益", abs(pp2.get("gain_db", 0)) > 10, f"{pp2.get('gain_db')} dB")
+check("状态行第二行讲清后处理", "后处理：" in status2,
+      status2.splitlines()[1] if len(status2.splitlines()) > 1 else status2)
+check("不削波", float(np.abs(wav2).max()) <= 0.9701, f"{float(np.abs(wav2).max()):.3f}")
 
-print("3) 只关归一化")
+print("3) 只开去静音")
 wav3, _, _, _, pp3 = core.synthesize({
     "mode": "design", "text": "测试文本", "language": "Chinese",
-    "pp_normalize": False, "pp_fade": False,
+    "pp_silence": True, "pp_normalize": False, "pp_fade": False,
 })
 check("只剪静音", pp3["silence"] and not pp3["normalize"] and not pp3["fade"],
       str({k: pp3[k] for k in ("silence", "normalize", "fade")}))
