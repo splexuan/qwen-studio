@@ -136,6 +136,193 @@ try:
           str(len(gapped)))
 
     # -----------------------------------------------------------------------
+    # 1c2. 切段均衡：用户实测 119 字不能切成 80 + 37
+    # -----------------------------------------------------------------------
+    _long_zh = (
+        "只是看了 Kimi K3.1 Pro 的演示视频，突发奇想拆解了一下，觉得挺有意思。\n\n"
+        "我一直希望国产模型越来越强，也很乐意看到优秀的 AI 产品被更多人认识。\n\n"
+        "但我确实还没亲手测试 K3.1 Pro，所以昨天聊的是视频，不是模型评测。"
+    )
+    _pieces = core.split_text(_long_zh, 100)
+    check("119 字按 100 字上限切成两段", len(_pieces) == 2, str([len(p) for p in _pieces]))
+    check("两段长度均衡，不出现 80 + 37", min(map(len, _pieces)) >= 45,
+          str([len(p) for p in _pieces]))
+    check("切段后文本不丢字", "".join(_pieces) == _long_zh,
+          f"{sum(map(len, _pieces))} / {len(_long_zh)}")
+    check("短文本不切", core.split_text("短句。", 100) == ["短句。"])
+    check("无标点长文本也按上限均分",
+          [len(p) for p in core.split_text("长" * 300, 100)] == [100, 100, 100],
+          str([len(p) for p in core.split_text("长" * 300, 100)]))
+
+    # -----------------------------------------------------------------------
+    # 1c3. 克隆稳定采样：默认值收敛、seed 可复现、RNG 用完恢复
+    # -----------------------------------------------------------------------
+    _stable = core._clone_sampling({})
+    check("克隆稳定模式默认开启", _stable["stable"] is True, str(_stable))
+    check("稳定模式使用低温度与收窄 top_p",
+          _stable["temperature"] == cfg.CLONE_STABLE_TEMPERATURE
+          and _stable["top_p"] == cfg.CLONE_STABLE_TOP_P, str(_stable))
+    _stable2 = core._clone_sampling({"stable": True, "seed": "12345"})
+    check("显式 seed 原样生效", _stable2["seed"] == 12345, str(_stable2))
+    check("克隆默认切段阈值为 600 字，119 字整段生成",
+          core._clone_chunk_chars({}) >= 600
+          and len(core.split_text(_long_zh, core._clone_chunk_chars({}))) == 1,
+          str(core._clone_chunk_chars({})))
+    check("稳定模式强制仅说话人向量",
+          core._clone_xvec_only({"stable": True, "xvec_only": False}, False) is True,
+          str(core._clone_xvec_only({"stable": True, "xvec_only": False}, False)))
+    check("关闭稳定模式后显式 xvec_only 优先",
+          core._clone_xvec_only({"stable": False, "xvec_only": False}, True) is False,
+          str(core._clone_xvec_only({"stable": False, "xvec_only": False}, True)))
+    _off = core._clone_sampling({"stable": False})
+    check("关闭稳定模式不覆盖内核采样参数",
+          _off == {"stable": False, "temperature": None, "top_p": None, "seed": None},
+          str(_off))
+
+    import random
+    _py_before = random.getstate()
+    _np_before = np.random.get_state()
+    _torch_before = core.torch.random.get_rng_state().clone()
+    with core._seeded_rng(20261024):
+        _a = (random.random(), float(np.random.random()),
+              float(core.torch.rand(1)))
+    with core._seeded_rng(20261024):
+        _b = (random.random(), float(np.random.random()),
+              float(core.torch.rand(1)))
+    check("同 seed 可复现 Python / NumPy / torch 采样", _a == _b, f"{_a} / {_b}")
+    check("生成后恢复 Python RNG 状态", random.getstate() == _py_before)
+    _np_after = np.random.get_state()
+    check("生成后恢复 NumPy RNG 状态",
+          _np_after[0] == _np_before[0] and np.array_equal(_np_after[1], _np_before[1])
+          and _np_after[2:] == _np_before[2:])
+    check("生成后恢复 torch CPU RNG 状态",
+          core.torch.equal(core.torch.random.get_rng_state(), _torch_before))
+    if core.torch.cuda.is_available():
+        _cu_before = [s.clone() for s in core.torch.cuda.get_rng_state_all()]
+        with core._seeded_rng(20261024):
+            core.torch.rand(1, device="cuda")
+        _cu_after = core.torch.cuda.get_rng_state_all()
+        check("生成后恢复 CUDA RNG 状态",
+              len(_cu_before) == len(_cu_after)
+              and all(core.torch.equal(a, b) for a, b in zip(_cu_before, _cu_after)))
+
+    _ref_syn = {"centroid": 900.0, "flatness": 0.07, "f0": 150.0}
+    _near_syn = {"centroid": 1100.0, "flatness": 0.12, "f0": 135.0}
+    _far_syn = {"centroid": 1500.0, "flatness": 0.28, "f0": 110.0}
+    check("漂移分数能区分轻微与明显偏离",
+          core._drift_score(_ref_syn, _far_syn)
+          > core._drift_score(_ref_syn, _near_syn), "")
+    check("重试择优会选择更接近参考的 take",
+          core._drift_score(_ref_syn, _near_syn)
+          < core._drift_score(_ref_syn, _far_syn), "")
+
+    # 说话人相似度择优：向量归一化、窗口最低分、硬下限和候选排序。
+    _emb = core._normalize_embedding(np.array([3.0, 4.0], dtype=np.float32))
+    check("speaker embedding 被归一化为单位向量",
+          np.allclose(_emb, [0.6, 0.8])
+          and abs(float(np.linalg.norm(_emb)) - 1.0) < 1e-6, str(_emb))
+    check("speaker cosine 同向量为 1、正交为 0",
+          abs(core._cosine(_emb, _emb) - 1.0) < 1e-6
+          and abs(core._cosine(_emb, np.array([-0.8, 0.6], dtype=np.float32)))
+          < 1e-6, "")
+    _wins = core._speaker_windows(tone(25 * 24000), 24000, 8.0, 3.0)
+    check("25 秒音频按 8 秒均衡切成 4 个窗口",
+          len(_wins) == 4 and all(len(w) / 24000 >= 3.0 for w in _wins),
+          str([round(len(w) / 24000, 2) for w in _wins]))
+    _ref_vec = np.array([1.0, 0.0], dtype=np.float32)
+    _good_prof = {"embedding": np.array([0.995, 0.1], dtype=np.float32),
+                  "cosine": 0.995, "min": 0.985}
+    _bad_prof = {"embedding": np.array([0.995, 0.1], dtype=np.float32),
+                 "cosine": 0.995, "min": 0.965}
+    check("低于硬下限的候选被标记为不合格",
+          core._speaker_candidate_key(_bad_prof, None)[0] is False
+          and core._speaker_candidate_key(_good_prof, None)[0] is True, "")
+    check("候选排序先看较差项，再取平均",
+          core._speaker_candidate_key(_good_prof, None)
+          > core._speaker_candidate_key(_bad_prof, None), "")
+    check("首条低于目标才追加候选",
+          core._needs_speaker_candidate(_bad_prof, None) is True
+          and core._needs_speaker_candidate(_good_prof, None) is False, "")
+    check("与上一段不连贯也会追加候选",
+          core._needs_speaker_candidate(
+              _good_prof, np.array([0.0, 1.0], dtype=np.float32)
+          ) is True, "")
+    check("48k 音频能重采样到 speaker encoder 的 24k",
+          len(core._resample_audio(np.zeros(4800, dtype=np.float32),
+                                   48000, 24000)) == 2400, "")
+
+    # 分段生成必须共用同一个主 seed；只有漂移重试才允许换 seed。
+    _seeds: list[int | None] = []
+    _gen_before = core._gen_clone
+
+    def _fake_gen(text, *args, **kwargs):
+        # _gen_clone(text, language, ref_audio, ref_text, instruct, size,
+        #           xvec_only, warm_prompt, temperature, top_p, seed)
+        _seeds.append(args[9] if len(args) > 9 else kwargs.get("seed"))
+        return tone(480), 24000
+
+    core._gen_clone = _fake_gen
+    try:
+        _p = {
+            "text": "甲" * 500,
+            "ref_audio": "unused",
+            "xvec_only": False,
+            "stable": True,
+            "seed": 20261024,
+            "chunk_chars": 100,
+        }
+        _fake_voice = {
+            "audio_path": "unused", "ref_text": "", "xvec_only": False,
+            "prompt": None,
+        }
+        _load_before = core.voices_mod.load_voice
+        core.voices_mod.load_voice = lambda _name: _fake_voice
+        try:
+            core._synth_clone(_p, "Auto", None, "1.7B")
+        finally:
+            core.voices_mod.load_voice = _load_before
+    finally:
+        core._gen_clone = _gen_before
+    check("分段克隆所有正常段共用同一主 seed",
+          _seeds == [20261024] * 5, str(_seeds))
+    check("稳定模式把实际克隆方式写回 payload",
+          _p.get("xvec_only") is True, str(_p.get("xvec_only")))
+    check("克隆记录写回实际切段阈值与短静音",
+          _p.get("chunk_chars") == 100 and _p.get("gap_secs") == cfg.CLONE_GAP_SECS,
+          f"{_p.get('chunk_chars')} / {_p.get('gap_secs')}")
+
+    # 已知好/坏样本来自用户这次的 119 字生成：
+    #   clone_20261024_182834.wav 前半（0–8.5s）明显不像；
+    #   后半（9s 起）与两条新单句（183711 / 183758）听起来一致。
+    # 文件是个人数据、不在 git 里；不存在时只跳过这一组实测断言。
+    _ref = ROOT / "voices" / "小约翰.wav"
+    _bad = ROOT / "outputs" / "clone_20261024_182834.wav"
+    _good = [ROOT / "outputs" / "clone_20261024_183711.wav",
+             ROOT / "outputs" / "clone_20261024_183758.wav"]
+    if _ref.exists() and _bad.exists() and all(p.exists() for p in _good):
+        import soundfile as sf
+
+        def _load(path, start=None, end=None):
+            x, sr = sf.read(str(path), dtype="float32", always_2d=False)
+            if getattr(x, "ndim", 1) > 1:
+                x = x.mean(axis=1)
+            if start is not None:
+                x = x[int(start * sr):int(end * sr) if end else None]
+            return x, int(sr)
+
+        _ref_feat = core._audio_features(*_load(_ref))
+        _bad_feat = core._audio_features(*_load(_bad, 0, 8.5))
+        _tail_feat = core._audio_features(*_load(_bad, 9, None))
+        check("旧坏样本前半被判定为音色漂移",
+              core._drifted(_ref_feat, _bad_feat), str(_bad_feat))
+        check("旧成品后半不误判",
+              not core._drifted(_ref_feat, _tail_feat), str(_tail_feat))
+        for _p in _good:
+            _f = core._audio_features(*_load(_p))
+            check(f"新单句 {_p.name} 不误判", not core._drifted(_ref_feat, _f),
+                  str(_f))
+
+    # -----------------------------------------------------------------------
     # 1d. 剧本解析：稳定 id / 场景 / 禁用行 / cast / 统计
     # -----------------------------------------------------------------------
     sample = (

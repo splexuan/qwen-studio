@@ -64,10 +64,20 @@ runtime\python\python.exe tools\qwen.py say --mode script --text - < 剧本.txt
 到 `state` 为 `done` 或 `error` → `done` 时音频在 `result.file`（相对 `outputs/`），
 `result.url` 可直接播放。生成是阻塞的 GPU 计算，**轮询间隔 1 秒就够，别高频打**。
 
-**文本次数不用自己切。** clone / official / script 三个模式内部按句切段（`split_text`），
+**文本次数不用自己切。** clone / official / script 三个模式内部均衡切段（`split_text`），
 切成几段就用同样的参数依次生成、段间插 0.4s 静音、最后拼成**一条**音频再落盘。
 多长都能提交；唯一的上限是 `MAX_AUDIO_SECONDS`（4 小时音频，内存保护）。
 只有 `mode=design` 仍然限 2000 字 —— 它每段都是一把新嗓子，切了会串味。
+
+**克隆默认开启音色稳定。** `stable` 缺省为 `true`：采样收敛到
+`temperature=0.35 / top_p=0.85`，强制 `xvec_only=true`，并让所有正常段
+共用同一主 seed；非流式逐段调用内核 speaker encoder 计算参考相似度和段间
+连贯度，低于目标才额外生成候选并择优，频谱/基频检查作为兜底。克隆默认
+600 字以内不切段，更长才均衡切分；段间静音默认 0.12s。
+完成结果的 `result.params` 会带实际生效的
+`stable / temperature / top_p / seed / drift_retries / candidate_takes /
+speaker_cosine / speaker_cos_min / speaker_chain_min / xvec_only / chunk_chars / gap_secs`。
+流式也使用稳定采样和 seed，但不做逐段替换式重试。
 
 ## 2.1 长文本的进度怎么看
 

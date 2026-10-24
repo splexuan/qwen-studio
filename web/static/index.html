@@ -1628,9 +1628,20 @@ a.btn{text-decoration:none}
                   <input type="checkbox" id="c-xvec">
                   <label class="switchrow__t" for="c-xvec" style="cursor:pointer">
                     <b>只用说话人向量（更快，但不学参考语调）</b>
-                    <span>默认走完整 ICL：参考音频和它的文本一起喂给模型，更像本人，也继承参考的语速与语气。
-                      勾上这里则只取音色向量 —— 换语种更干净、也不依赖参考文本，但相似度会打折。
-                      选音色库里的音色时，这里会跟着那个音色保存时的设置走，也可以当场改 —— 只影响这一次生成。</span>
+                    <span>「音色稳定」开启时会自动锁定为仅向量：各段共用同一份 speaker embedding，
+                      不受参考音频韵律和末字串音影响。关掉稳定后可以自由选择 ——
+                      完整 ICL 更贴参考语气，但段间差异通常也更大。</span>
+                  </label>
+                </div>
+
+                <div class="switchrow mt">
+                  <input type="checkbox" id="c-stable" checked>
+                  <label class="switchrow__t" for="c-stable" style="cursor:pointer">
+                    <b>音色稳定（推荐）</b>
+                    <span>降低采样随机性、锁定仅说话人向量、所有段共用主 seed；
+                      119 字这类中等文本默认整段生成，超过 600 字才均衡切段。
+                      每段还会和参考音频比一次说话人向量；低于目标才额外生成候选并择优。
+                      代价是语调变化会少一点。关掉则恢复完整 ICL 和内核默认采样。</span>
                   </label>
                 </div>
               </div>
@@ -2004,6 +2015,14 @@ a.btn{text-decoration:none}
               </div>
             </div>
             <p class="hint mt" id="set-def-size-hint"></p>
+            <div class="switchrow mt">
+              <input type="checkbox" id="set-clone-stable">
+              <label class="switchrow__t" for="set-clone-stable" style="cursor:pointer">
+                <b>克隆默认使用「音色稳定」</b>
+                <span>新打开克隆页时默认勾上。实际温度和 top_p 由服务端下发，
+                  单次生成时仍可在克隆页关掉。</span>
+              </label>
+            </div>
           </div>
         </div>
 
@@ -2869,6 +2888,24 @@ function paramPairs(p) {
   else if (p.instruct) put("情感指令", p.instruct);
   if (p.mode === "clone" && p.xvec_only != null)
     put("克隆方式", p.xvec_only ? "仅说话人向量" : "完整 ICL（含参考韵律）");
+  if (p.mode === "clone" && p.stable != null) {
+    if (p.stable) {
+      const t = Number(p.temperature);
+      const tp = Number(p.top_p);
+      put("音色稳定", `开启（温度 ${Number.isFinite(t) ? t.toFixed(2) : "—"}，`
+        + `top_p ${Number.isFinite(tp) ? tp.toFixed(2) : "—"}）`);
+      if (p.seed != null) put("采样 seed", String(p.seed));
+      if (p.drift_retries != null) put("漂移重试", `${Number(p.drift_retries) || 0} 段`);
+      if (p.candidate_takes != null)
+        put("候选择优", `${Number(p.candidate_takes) || 0} 条 take`);
+      if (p.speaker_cos_min != null)
+        put("说话人相似度", `最低 ${(Number(p.speaker_cos_min) * 100).toFixed(1)}%`);
+      if (p.speaker_chain_min != null)
+        put("段间音色连贯度", `${(Number(p.speaker_chain_min) * 100).toFixed(1)}%`);
+    } else {
+      put("音色稳定", "关闭（内核默认采样）");
+    }
+  }
   if (p.mode === "script") put("段间静音", (p.gap_secs ?? BOOT.defaults?.gap_secs ?? 0.4) + " s");
   // 只在 payload 真带了这几项时才显示 —— 老记录、脚本直调可能压根没传，
   // 那时按「关闭」写出来是瞎猜（后端缺省是全开）。
@@ -3359,7 +3396,7 @@ async function runJob(payload, R) {
       // 流式只改「什么时候出声」，不改结果卡的样子。
       if (R) paintResult(R, {
         url: res.url, file: res.file, duration: res.duration, level: res.level,
-        message: res.status, params: payload, took: res.took,
+        message: res.status, params: { ...payload, ...(res.params || {}) }, took: res.took,
         // 流式那一单不会做后处理，后端会在 done 里带 skipped 标记 —— 传下去，
         // 参数表才会写「已跳过」而不是让用户以为剪过静音
         postprocess: res.postprocess,
@@ -3410,7 +3447,7 @@ async function runJob(payload, R) {
     const res = st.result || {};
     if (R) paintResult(R, {
       url: res.url, file: res.file, duration: res.duration, level: res.level,
-      message: st.message, params: payload,
+      message: st.message, params: { ...payload, ...(res.params || {}) },
       // 用服务端报的合成耗时（和合成记录里那个数一致）；老服务端没这个字段时退回前端掐的
       took: res.took ?? (Date.now() - t0) / 1000,
       postprocess: res.postprocess,
@@ -4199,6 +4236,7 @@ function renderCloneVoice() {
       if (!b) return;
       if (b.dataset.role === "edit-ref") openRefText(v.name);
       if (b.dataset.role === "force-xvec") {
+        _xvecPreferred = true;
         $("#c-xvec").checked = true;
         syncXvecHint();
         note.innerHTML = noteHTML("这一次会走仅说话人向量：不依赖参考文本，音色相似度会低一些。"
@@ -4359,7 +4397,7 @@ function initUploadPane() {
       const r = await postVoice({
         name, upload: _uploadInfo.name,
         ref_text: refText,
-        xvec_only: $("#c-xvec").checked,
+        xvec_only: _xvecPreferred,
         start: sel.start, end: sel.end,
       });
       // 先切状态再刷新：refreshVoices() 内部会调 renderCloneVoice()，
@@ -4496,10 +4534,30 @@ function suggestVoiceName(desc) {
 /* 复选框指向哪种模式 —— 参考文本那行提示始终跟着它走 */
 function syncXvecHint() {
   const on = $("#c-xvec").checked;
-  $("#c-ref-hint").textContent = on
-    ? "当前是「只用说话人向量」：临时生成时参考文本可以不填；但存进音色库仍要填 —— 以后想切回完整 ICL 或抽音色基因，都要靠它。"
-    : "当前是完整 ICL 模式 —— 这里必须逐字写准，写错会直接影响输出。";
+  const stable = $("#c-stable")?.checked;
+  $("#c-ref-hint").textContent = stable
+    ? "音色稳定已开启：本次强制只用说话人向量，参考文本可不填。"
+    : (on
+      ? "当前是「只用说话人向量」：临时生成时参考文本可以不填；但存进音色库仍要填 —— 以后想切回完整 ICL 或抽音色基因，都要靠它。"
+      : "当前是完整 ICL 模式 —— 这里必须逐字写准，写错会直接影响输出。");
   syncInstructTip();
+}
+
+/* 稳定模式与克隆方式是一组联动，不是两个各自独立的开关。
+   后端在稳定开启时会强制 xvec_only=true；界面若不跟着锁定，
+   用户会看到「没勾仅向量」但实际走的是仅向量。关闭稳定后恢复
+   音色自身设置，同时允许手动切换。 */
+function syncStableMode() {
+  const stable = $("#c-stable").checked;
+  const box = $("#c-xvec");
+  if (stable) {
+    box.checked = true;
+    box.disabled = true;
+  } else {
+    box.disabled = false;
+    box.checked = _xvecPreferred;
+  }
+  syncXvecHint();
 }
 
 /* 情绪怎么调才有效 —— 这条提示的每个数字都是实测出来的
@@ -4544,6 +4602,9 @@ function syncInstructTip() {
    **只在「换了一个音色」时同步**：renderCloneVoice 每次保存/刷新都会重画，
    若无条件同步，用户刚手动勾好的「这一次用向量」会被悄悄改回去。 */
 let _xvecSyncedVoice = "";
+// 非稳定模式下的真实选择。稳定模式会把复选框临时锁成 true，
+// 但不能让这个临时值覆盖“保存音色”时持久化的克隆方式。
+let _xvecPreferred = false;
 function syncXvecToVoice(v, { force = false } = {}) {
   if (!v || typeof v.xvec_only !== "boolean") return;
   const key = `${v.name}:${v.mtime || 0}`;   // 音频被重新上传后 mtime 会变，跟着重新同步
@@ -4551,7 +4612,9 @@ function syncXvecToVoice(v, { force = false } = {}) {
   _xvecSyncedVoice = key;
   const box = $("#c-xvec");
   if (!box) return;
-  box.checked = v.xvec_only;
+  _xvecPreferred = v.xvec_only;
+  if ($("#c-stable")?.checked) syncStableMode();
+  else box.checked = v.xvec_only;
   // 值没变也要重画提示：从「完整 ICL 音色（手动切到向量）」换到
   // 「本身就是向量的音色」时，复选框前后都是 true，但提示仍是上一句的。
   syncXvecHint();
@@ -4610,17 +4673,18 @@ function estLim() {
   return {
     cps: Number(L.chars_per_sec) || 4.8,          // 字/秒，历史记录里的中位数
     chunk: Number(L.chunk_chars) || 60,           // 单段切分长度
+    cloneChunk: Number(L.clone_chunk_chars) || Math.max(600, Number(L.chunk_chars) || 60),
     maxSecs: Number(L.max_audio_secs) || 14400,
   };
 }
 
-function estPlan(chars) {
+function estPlan(chars, chunk = estLim().chunk) {
   if (!chars) return null;
   const L = estLim();
   const audio = chars / L.cps;                    // 念出来多长
-  // split_text 会**提前**在句末标点处断（到 0.6×上限就够），所以真实段数
-  // 比「字数 / 上限」多 —— 按 0.75 折算。宁可估多一段，也别估少了当场打脸。
-  const pieces = Math.max(1, Math.ceil(chars / Math.max(1, L.chunk * 0.75)));
+  // split_text 先按上限算出最少段数，再在标点附近均衡切分，所以真实段数
+  // 就是 ceil(chars / chunk)。不要再乘 0.75 —— 那会让预估段数偏多。
+  const pieces = Math.max(1, Math.ceil(chars / Math.max(1, chunk)));
   // 生成耗时 ≈ 音频时长 × RTF。RTF 随场景在 0.79–1.79 之间飘（见 README），
   // 取 1.15 偏保守：估少了用户会盯着进度条怀疑卡死，估多了只是惊喜。
   return { audio, pieces, wait: audio * 1.15 };
@@ -4638,13 +4702,13 @@ function fmtSpan(sec) {
 function paintEstimate(chars) {
   const el = $("#c-est");
   if (!el) return;
-  const p = estPlan(chars);
+  const L = estLim();
+  const p = estPlan(chars, L.cloneChunk);
   if (!p) {
     el.className = "hint mt";
     el.textContent = "不限字数。开始输入后这里会给出「几段 · 多长 · 大概等多久」的预估。";
     return;
   }
-  const L = estLim();
   const over = p.audio > L.maxSecs;
   el.className = "hint mt" + (over ? " est--bad" : (p.wait > 1800 ? " est--warn" : ""));
   el.innerHTML = p.pieces <= 1
@@ -4676,7 +4740,23 @@ function setCloneSrc(src) {
 
 function initClone() {
   syncXvecHint();
-  $("#c-xvec").addEventListener("change", syncXvecHint);
+  $("#c-xvec").addEventListener("change", () => {
+    if (!$("#c-xvec").disabled) _xvecPreferred = $("#c-xvec").checked;
+    syncXvecHint();
+  });
+  // 默认值由 /api/bootstrap 下发；漂移检测是后端独立的兜底开关，
+  // 不暴露成第二个复选框。
+  let stableDefault = BOOT.defaults?.clone_stable !== false;
+  try {
+    const saved = localStorage.getItem("qs-clone-stable-default");
+    if (saved === "0" || saved === "1") stableDefault = saved === "1";
+  } catch (_) { /* 隐私模式下用服务端默认 */ }
+  $("#c-stable").checked = stableDefault;
+  $("#c-stable").addEventListener("change", () => {
+    syncStableMode();
+    paintEstimate($("#c-text")?.value.trim().length || 0);
+  });
+  syncStableMode();
 
   _cloneEditor = createEditor($("#c-editor"), {
     saveLabel: "用这段存成音色",
@@ -4763,7 +4843,7 @@ function initClone() {
     // 真会发生的事：一是超出内存装得下的音频（后端也会拒，这里先拦是为了别让人
     // 等完一圈才被拒），二是「久到不像话」的一次运行 —— 那种情况给个确认，
     // 因为一旦开始，几十分钟里同机的其他生成都排在它后面。
-    const plan = estPlan(text.length);
+    const plan = estPlan(text.length, estLim().cloneChunk);
     const L = estLim();
     if (plan && plan.audio > L.maxSecs) {
       toast(`这段约 ${fmtSpan(plan.audio)} 音频，超出单次内存上限，请拆成几次生成`, "err");
@@ -4785,7 +4865,9 @@ function initClone() {
     const payload = {
       mode: "clone", text, language: RAILS.c.lang(), size: RAILS.c.size(),
       instruct: inst.value.trim(),
-      xvec_only: $("#c-xvec").checked,
+      // 稳定模式由后端强制仅向量；payload 也明确写 true，便于记录复现。
+      xvec_only: $("#c-stable").checked ? true : $("#c-xvec").checked,
+      stable: $("#c-stable").checked,
       ...ppPayload(),
     };
     if (STATE.clone.src === "lib") {
@@ -6776,6 +6858,27 @@ function histParamsText(it) {
   if (it.mode === "clone" && it.xvec_only != null) {
     put("克隆方式", it.xvec_only ? "仅说话人向量" : "完整 ICL（含参考韵律）");
   }
+  if (it.mode === "clone" && it.stable != null) {
+    if (it.stable) {
+      const t = Number(it.temperature);
+      const tp = Number(it.top_p);
+      put("音色稳定", `开启（温度 ${Number.isFinite(t) ? t.toFixed(2) : "—"}，`
+        + `top_p ${Number.isFinite(tp) ? tp.toFixed(2) : "—"}）`);
+      if (it.seed != null) put("采样 seed", it.seed);
+      if (it.drift_retries != null) put("漂移重试", `${Number(it.drift_retries) || 0} 段`);
+      if (it.candidate_takes != null)
+        put("候选择优", `${Number(it.candidate_takes) || 0} 条 take`);
+      if (it.speaker_cos_min != null)
+        put("说话人相似度", `最低 ${(Number(it.speaker_cos_min) * 100).toFixed(1)}%`);
+      if (it.speaker_chain_min != null)
+        put("段间音色连贯度", `${(Number(it.speaker_chain_min) * 100).toFixed(1)}%`);
+    } else {
+      put("音色稳定", "关闭（内核默认采样）");
+    }
+  }
+  if (it.mode === "clone" && it.chunk_chars != null) {
+    put("切段阈值", `${it.chunk_chars} 字`);
+  }
   if (it.mode === "script" && it.gap_secs != null) put("段间静音", `${it.gap_secs} s`);
   // 记录里存的是统计结果：applied 表示三项里至少有一项真的执行过。
   // 关掉 / 空音频（带 reason）分别说出来，别把「没跑」误写成「跑了但没效果」。
@@ -6907,6 +7010,19 @@ function histMetaHTML(it) {
   const out = [`规格 ${sizeLabel(it.size)}`, `语种 ${it.language || "Auto"}`];
   if (it.mode === "clone" && it.xvec_only != null) {
     out.push(`克隆方式 ${it.xvec_only ? "仅说话人向量" : "完整 ICL（含参考韵律）"}`);
+  }
+  if (it.mode === "clone" && it.stable === true) {
+    out.push("音色稳定 开启");
+    if (it.seed != null) out.push(`seed ${it.seed}`);
+    if (it.drift_retries) out.push(`漂移重试 ${it.drift_retries} 段`);
+    if (it.candidate_takes) out.push(`候选 ${it.candidate_takes} 条`);
+    if (it.speaker_cos_min != null)
+      out.push(`说话人 ${(Number(it.speaker_cos_min) * 100).toFixed(1)}%`);
+  } else if (it.mode === "clone" && it.stable === false) {
+    out.push("音色稳定 关闭");
+  }
+  if (it.mode === "clone" && it.chunk_chars != null) {
+    out.push(`切段阈值 ${it.chunk_chars} 字`);
   }
   if (it.mode === "script" && it.gap_secs != null) out.push(`段间静音 ${it.gap_secs} s`);
   // 后处理：记录里存的是「实际动了多少」，不是开关。想回看「这条为什么比上次短」
@@ -7293,6 +7409,24 @@ function bindSettings() {
   $("#set-def-size").addEventListener("change", () => {
     saveGenDefaults({ size: $("#set-def-size").value });
     paintDefHint();
+  });
+  // 和克隆页读同一个本地偏好；否则设置页显示服务端默认，克隆页却按
+  // 用户上次保存的开关走，两个入口会各说各话。
+  $("#set-clone-stable").checked = (() => {
+    try {
+      const saved = localStorage.getItem("qs-clone-stable-default");
+      if (saved === "0" || saved === "1") return saved === "1";
+    } catch (_) { /* 隐私模式下用服务端默认 */ }
+    return BOOT.defaults?.clone_stable !== false;
+  })();
+  $("#set-clone-stable").addEventListener("change", () => {
+    // 单次生成页的开关是「这一次」；这里改的是「下次打开时默认值」，
+    // 两者分开存，免得生成页的临时选择把全局默认值悄悄改掉。
+    try {
+      localStorage.setItem("qs-clone-stable-default",
+        $("#set-clone-stable").checked ? "1" : "0");
+    } catch (_) { /* 隐私模式下只影响本页 */ }
+    toast("克隆默认值已更新，下次打开克隆页生效", "ok");
   });
 
   $("#set-preload").addEventListener("click", async () => {

@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import gc
 import os
+import random
 import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -301,39 +303,86 @@ def _run_pieces(
 # 文本切分（长文本 / 长台词）
 # ---------------------------------------------------------------------------
 _SENT_END = "。！？!?；;\n"
+_CLAUSE_END = "，,、：: "
+_BREAK_END = _SENT_END + _CLAUSE_END
 
 
 def split_text(text: str, max_chars: int) -> list[str]:
-    """按标点把长文本切成不超过 max_chars 的片段。
+    """把长文本切成长度均衡、且不超过 max_chars 的片段。
 
     Qwen3-TTS 单次生成受 max_new_tokens=2048 限制（12Hz 下约 170 秒音频），
     过长会截断或失控，因此送入前先切。切点优先落在句末标点上，
     避免在词中间断开发音。
+
+    旧实现从前往后贪心：遇到 max_chars 才硬切，切点回退到最近的逗号。
+    这样很容易切出「92 字 + 18 字」这种尾巴极短的两段 —— 第一段太长，
+    音色会逐渐漂移；第二段重新起头，反而最像参考音频。用户听起来就是
+    「前面都不像，只有最后一句像」。
+
+    这里先按 ``ceil(长度 / max_chars)`` 算出最少需要几段，再围绕每段的
+    理想长度找最近的标点；标点离理想位置太远时才硬切。这样既保留句读，
+    也不会把最后一段饿成十几个字。
     """
     text = (text or "").strip()
     if not text:
         return []
-    if len(text) <= max_chars:
+    max_chars = max(1, int(max_chars or 1))
+    total = len(text)
+    if total <= max_chars:
         return [text]
 
+    # 段数只取「装得下」的最小值，长度再围绕 total/n 均分。
+    # 例如 110 字 / 100 字上限 = 2 段，而不是 92 + 18。
+    count = (total + max_chars - 1) // max_chars
+    # 标点位置是「切完这个标点之后」的下标；越靠近理想切点的越优先。
+    breaks = [
+        (i + 1, ch in _SENT_END)
+        for i, ch in enumerate(text)
+        if ch in _BREAK_END
+    ]
+
     out: list[str] = []
-    buf = ""
-    for ch in text:
-        buf += ch
-        if ch in _SENT_END and len(buf) >= max_chars * 0.6:
-            out.append(buf.strip())
-            buf = ""
-        elif len(buf) >= max_chars:
-            # 一直没遇到句末标点，被迫硬切；回退到最近的逗号，再不行直接切
-            cut = max(buf.rfind("，"), buf.rfind(","), buf.rfind("、"))
-            if cut >= max_chars * 0.5:
-                out.append(buf[: cut + 1].strip())
-                buf = buf[cut + 1:]
-            else:
-                out.append(buf.strip())
-                buf = ""
-    if buf.strip():
-        out.append(buf.strip())
+    start = 0
+    for k in range(count - 1):
+        remaining = count - k - 1
+        # 当前段至少留一点；同时保证剩下的字还能塞进剩余段数。
+        lower = max(start + 1, total - remaining * max_chars)
+        upper = min(start + max_chars, total - remaining)
+        if lower > upper:
+            # 理论上不会走到这里；真遇到就把剩余部分交给下一轮，
+            # 不让一个异常参数把整段生成直接打断。
+            break
+
+        # 按「剩余文字的平均长度」取理想切点，而不是一开始就算死。
+        ideal = start + (total - start) // (remaining + 1)
+        candidates = [
+            (pos, strong)
+            for pos, strong in breaks
+            if lower <= pos <= upper and pos > start
+        ]
+        if candidates:
+            # 最近的标点；距离相同的时候优先句末标点（。！？）。
+            pos, _strong = min(
+                candidates,
+                key=lambda item: (abs(item[0] - ideal), 0 if item[1] else 1),
+            )
+            # 标点离理想位置太远（例如一句话有 80 字）时，宁可硬切，
+            # 也不要为了句读留下一个 80/30 的偏斜分段。
+            tolerance = max(4, int(max_chars * 0.2))
+            end = pos if abs(pos - ideal) <= tolerance else ideal
+        else:
+            end = ideal
+
+        end = max(lower, min(upper, end))
+        piece = text[start:end].strip()
+        if piece:
+            out.append(piece)
+        start = end
+
+    if start < total:
+        tail = text[start:].strip()
+        if tail:
+            out.append(tail)
     return [s for s in out if s]
 
 
@@ -428,6 +477,382 @@ def _status_line(wav: np.ndarray, sr: int, t_cost: float, extra: str = "") -> st
 
 
 # ---------------------------------------------------------------------------
+# 克隆采样稳定性
+# ---------------------------------------------------------------------------
+def _clone_sampling(p: dict) -> dict:
+    """把克隆的采样参数收敛成一组安全的实际值。
+
+    ``stable`` 开启时使用低温度 + 收窄的核采样；关闭时保留内核默认值。
+    这里不把参数暴露成任意滑块：用户要的是「像不像」，不是调参实验。
+    值仍然会写进合成记录，方便以后复现某一条。
+    """
+    stable = bool(p.get("stable", cfg.CLONE_STABLE_DEFAULT))
+    if not stable:
+        return {
+            "stable": False,
+            "temperature": None,
+            "top_p": None,
+            "seed": None,
+        }
+    try:
+        seed = int(p.get("seed"))
+    except (TypeError, ValueError):
+        seed = None
+    if seed is None or seed < 0:
+        seed = random.randrange(1, 2**31)
+    return {
+        "stable": True,
+        "temperature": float(cfg.CLONE_STABLE_TEMPERATURE),
+        "top_p": float(cfg.CLONE_STABLE_TOP_P),
+        "seed": seed,
+    }
+
+
+def _clone_chunk_chars(p: dict) -> int:
+    """克隆的切段阈值：中等长度不切，超长才按句均衡切开。
+
+    显式传入的 ``chunk_chars`` 仍可用于脚本/调试，但同样不会超过
+    ``MAX_TEXT_CHARS``。默认值对所有克隆任务生效，不只在稳定模式生效：
+    是否低随机采样与“要不要切段”是两件独立的事。
+    """
+    try:
+        requested = int(p.get("chunk_chars") or 0)
+    except (TypeError, ValueError):
+        requested = 0
+    if requested > 0:
+        return min(cfg.MAX_TEXT_CHARS, requested)
+    return min(
+        cfg.MAX_TEXT_CHARS,
+        max(cfg.CLONE_CHUNK_CHARS, int(cfg.profile().script_chunk_chars)),
+    )
+
+
+def _clone_xvec_only(p: dict, voice_default: bool | None = None) -> bool:
+    """决定克隆是否只使用 speaker embedding。
+
+    稳定模式开启时强制锁 speaker embedding。前端会同步勾选并禁用那个
+    复选框，所以界面上不会出现“稳定开着、实际走完整 ICL”的矛盾。
+    关闭稳定模式后，显式传入的 xvec_only 优先，其次才是音色自身设置。
+    """
+    if bool(p.get("stable", cfg.CLONE_STABLE_DEFAULT)):
+        return bool(cfg.CLONE_STABLE_XVEC_ONLY)
+    if p.get("xvec_only") is not None:
+        return bool(p["xvec_only"])
+    if voice_default is not None:
+        return bool(voice_default)
+    return bool(cfg.CLONE_XVEC_ONLY)
+
+
+def _record_sampling(
+    p: dict, sampling: dict, retried: int = 0, actual: dict | None = None,
+) -> dict:
+    """把这次**实际生效**的采样参数写回 payload。
+
+    server 的合成记录就是 ``{**p, ...}``，前端结果卡也读同一份字段。
+    如果只把参数留在局部变量里，事后看到「这条不像」却不知道当时用的
+    seed / 温度，所谓「可复现」就只是句空话。
+    """
+    rec = {
+        "stable": bool(sampling["stable"]),
+        "temperature": sampling["temperature"],
+        "top_p": sampling["top_p"],
+        "seed": sampling["seed"],
+        "drift_retries": int(retried),
+    }
+    if actual:
+        # xvec_only / chunk_chars / gap_secs 也要记录实际值：前端可能传了
+        # false，但稳定模式会强制走 speaker embedding；只记原始请求会误导。
+        rec.update(actual)
+    p.update(rec)
+    return rec
+
+
+@contextmanager
+def _seeded_rng(seed: int | None):
+    """在生成期间固定 torch / Python 的随机状态，结束后原样恢复。
+
+    内核没有 ``seed`` 形参，采样直接走全局 torch RNG。这里保存并恢复
+    进程级状态，既让单次任务可复现，也不污染同一服务进程里的其他任务。
+    """
+    if seed is None:
+        yield
+        return
+    py_state = random.getstate()
+    np_state = np.random.get_state()
+    cpu_state = torch.random.get_rng_state()
+    cuda_states = torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+    try:
+        random.seed(seed)
+        np.random.seed(seed % (2**32))
+        torch.manual_seed(seed)
+        if cuda_states is not None:
+            torch.cuda.manual_seed_all(seed)
+        yield
+    finally:
+        random.setstate(py_state)
+        np.random.set_state(np_state)
+        torch.random.set_rng_state(cpu_state)
+        if cuda_states is not None:
+            torch.cuda.set_rng_state_all(cuda_states)
+
+
+_FEATURE_SR = 16000
+_SPEAKER_SR = 24000
+
+
+def _resample_for_features(wav: np.ndarray, sr: int) -> tuple[np.ndarray, int]:
+    """把参考音频和生成音频统一到 16 kHz 再比较。
+
+    参考音频常见 44.1/48 kHz，生成音频是 24 kHz。直接比频谱平坦度会
+    把「有效带宽不同」误当成「音色变了」：实测同一段参考从 44.1 kHz
+    降到 24 kHz，平坦度就从 0.0056 变成 0.017。统一采样率后这个变量消失。
+    """
+    if sr == _FEATURE_SR:
+        return np.asarray(wav, dtype=np.float32), sr
+    from scipy.signal import resample_poly
+
+    g = np.gcd(int(sr), _FEATURE_SR)
+    up, down = _FEATURE_SR // g, int(sr) // g
+    y = resample_poly(np.asarray(wav, dtype=np.float32), up, down)
+    return np.asarray(y, dtype=np.float32), _FEATURE_SR
+
+
+def _audio_features(wav: np.ndarray, sr: int) -> dict | None:
+    """提取用于判断「整段是否明显变嗓」的轻量声学特征。
+
+    只用 numpy，避免为了一个检查引入 librosa 这种重依赖。特征刻意选得
+    很粗：目标是抓「113 Hz / 2084 Hz 这种整段跑偏」，不是做说话人识别。
+    """
+    try:
+        x = np.asarray(wav, dtype=np.float64).reshape(-1)
+        if x.size == 0 or sr <= 0:
+            return None
+        x, sr = _resample_for_features(x, int(sr))
+        x = np.asarray(x, dtype=np.float64).reshape(-1)
+        # 掐掉首尾低能量部分，避免长静音把统计稀释
+        hop = max(1, int(sr * 0.02))
+        n = len(x) // hop
+        if n < 5:
+            return None
+        frames = x[: n * hop].reshape(n, hop)
+        rms = np.sqrt(np.mean(frames * frames, axis=1))
+        floor = max(1e-6, float(np.percentile(rms, 10)))
+        voiced = frames[rms > floor * 2.0]
+        if len(voiced) < 5:
+            voiced = frames
+        y = voiced.reshape(-1)
+        if y.size < max(256, int(sr * 0.2)):
+            return None
+
+        # 频谱质心 / 平坦度：用 512 点 FFT，20 ms 帧、10 ms 跳
+        fft = 512
+        win = np.hanning(fft).astype(np.float64)
+        step = max(1, fft // 2)
+        starts = range(0, max(0, len(y) - fft + 1), step)
+        cent, flat = [], []
+        freqs = np.fft.rfftfreq(fft, 1.0 / sr)
+        for i in starts:
+            spec = np.abs(np.fft.rfft(y[i:i + fft] * win))
+            total = float(np.sum(spec))
+            if total <= 1e-12:
+                continue
+            cent.append(float(np.sum(freqs * spec) / total))
+            p = spec / total
+            flat.append(float(np.exp(np.mean(np.log(np.maximum(p, 1e-12))))
+                              / np.mean(p)))
+        if not cent:
+            return None
+
+        # 基频：自相关找一个 70–400 Hz 的主周期。只保留有声帧，
+        # 再取中位数；个别八度错误不会改变整段的结论。
+        f0 = []
+        lo = max(2, int(sr / 400))
+        hi = min(len(y) - 1, int(sr / 70))
+        for i in starts:
+            seg = y[i:i + fft]
+            if len(seg) < fft:
+                continue
+            seg = seg - float(np.mean(seg))
+            corr = np.correlate(seg, seg, mode="full")[len(seg) - 1:]
+            if corr[0] <= 1e-12:
+                continue
+            lag = lo + int(np.argmax(corr[lo:hi + 1]))
+            if corr[lag] / corr[0] >= 0.3:
+                f0.append(sr / lag)
+        return {
+            "centroid": float(np.median(cent)),
+            "flatness": float(np.median(flat)),
+            "f0": float(np.median(f0)) if f0 else 0.0,
+        }
+    except Exception:  # noqa: BLE001  检查失败不应该让生成失败
+        return None
+
+
+def _drift_score(ref: dict | None, got: dict | None) -> float:
+    """返回相对参考音频的最大偏离倍数，1.0 表示完全相同。
+
+    频谱平坦度是噪声/气声的代理。统一到 16 kHz 后，实测参考约 0.067，
+    正常新样本约 0.105–0.124，旧坏段约 0.278；三项中任意一项超限就重试。
+    """
+    if not ref or not got:
+        return 0.0
+
+    def ratio(a: float, b: float) -> float:
+        if a <= 1e-9 or b <= 1e-9:
+            return 1.0
+        return max(a / b, b / a)
+
+    return max(
+        ratio(ref["centroid"], got["centroid"]) / cfg.CLONE_DRIFT_CENTROID_RATIO,
+        ratio(ref["flatness"], got["flatness"]) / cfg.CLONE_DRIFT_FLATNESS_RATIO,
+        ratio(ref["f0"], got["f0"]) / cfg.CLONE_DRIFT_F0_RATIO,
+    )
+
+
+def _drifted(ref: dict | None, got: dict | None) -> bool:
+    """判断一段音频是否明显偏离参考音频。"""
+    return _drift_score(ref, got) > 1.0
+
+
+def _resample_audio(
+    wav: np.ndarray, sr: int, target_sr: int,
+) -> np.ndarray:
+    """把单声道音频重采样到目标采样率。"""
+    x = np.asarray(wav, dtype=np.float32).reshape(-1)
+    sr = int(sr)
+    if sr <= 0:
+        raise ValueError("音频采样率无效。")
+    if sr == int(target_sr):
+        return np.ascontiguousarray(x, dtype=np.float32)
+    from scipy.signal import resample_poly
+
+    g = np.gcd(sr, int(target_sr))
+    up, down = int(target_sr) // g, sr // g
+    y = resample_poly(x, up, down)
+    return np.ascontiguousarray(y, dtype=np.float32)
+
+
+def _normalize_embedding(embedding) -> np.ndarray:
+    """把 speaker embedding 转成单位向量，避免长度影响 cosine。"""
+    emb = np.asarray(embedding, dtype=np.float32).reshape(-1)
+    if emb.size == 0:
+        raise ValueError("speaker embedding 为空。")
+    norm = float(np.linalg.norm(emb))
+    if not np.isfinite(norm) or norm <= 1e-9:
+        raise ValueError("speaker embedding 范数为零。")
+    return np.ascontiguousarray(emb / norm, dtype=np.float32)
+
+
+def _cosine(a: np.ndarray, b: np.ndarray) -> float:
+    """两个已归一化向量的 cosine；形状不一致时返回 0。"""
+    aa = np.asarray(a, dtype=np.float32).reshape(-1)
+    bb = np.asarray(b, dtype=np.float32).reshape(-1)
+    if aa.size == 0 or aa.shape != bb.shape:
+        return 0.0
+    return float(np.clip(np.dot(aa, bb), -1.0, 1.0))
+
+
+def _speaker_windows(
+    wav: np.ndarray, sr: int,
+    window_secs: float | None = None,
+    min_window_secs: float | None = None,
+) -> list[np.ndarray]:
+    """按目标窗长把音频均衡切开，避免留下过短尾巴。"""
+    x = np.asarray(wav, dtype=np.float32).reshape(-1)
+    sr = int(sr)
+    if x.size == 0 or sr <= 0:
+        return []
+    window = max(1.0, float(window_secs or cfg.CLONE_SPK_WINDOW_SECS))
+    min_window = max(1.0, float(min_window_secs or cfg.CLONE_SPK_MIN_WINDOW_SECS))
+    duration = len(x) / sr
+    if duration <= window:
+        return [x]
+    count = int(np.ceil(duration / window))
+    if duration / count < min_window:
+        count = max(1, int(duration // min_window))
+    # 单段最多 600 字，正常不会到这里；留一道护栏防止异常输入拖垮检查。
+    count = min(count, 64)
+    bounds = np.linspace(0, len(x), count + 1, dtype=np.int64)
+    return [x[int(a):int(b)] for a, b in zip(bounds[:-1], bounds[1:]) if b > a]
+
+
+def _speaker_embedding(model, wav: np.ndarray, sr: int) -> np.ndarray:
+    """用内核自己的 speaker encoder 提取并归一化音色向量。"""
+    x = _resample_audio(wav, sr, _SPEAKER_SR)
+    inner = getattr(model, "model", model)
+    inner = getattr(inner, "model", inner)
+    extract = getattr(inner, "extract_speaker_embedding", None)
+    if extract is None:
+        raise RuntimeError("当前内核不支持 extract_speaker_embedding。")
+    emb = extract(np.ascontiguousarray(x, dtype=np.float32), _SPEAKER_SR)
+    if hasattr(emb, "detach"):
+        emb = emb.detach().float().cpu().numpy()
+    return _normalize_embedding(emb)
+
+
+def _speaker_profile(
+    model, wav: np.ndarray, sr: int, ref_embedding: np.ndarray,
+) -> dict | None:
+    """返回整段 cosine、窗口最低 cosine 和整段向量。"""
+    try:
+        full = _speaker_embedding(model, wav, sr)
+        windows = _speaker_windows(wav, sr)
+        if len(windows) == 1:
+            window_embs = [full]
+        else:
+            window_embs = [_speaker_embedding(model, w, sr) for w in windows]
+        scores = [_cosine(ref_embedding, emb) for emb in window_embs]
+        if not scores:
+            return None
+        return {
+            "embedding": full,
+            "cosine": _cosine(ref_embedding, full),
+            "min": float(min(scores)),
+        }
+    except Exception:  # noqa: BLE001  评分失败只退回频谱检查，不让生成失败
+        return None
+
+
+def _speaker_candidate_key(
+    profile: dict | None, previous: np.ndarray | None,
+) -> tuple:
+    """候选排序键：先满足硬下限，再优化“参考相似度 / 段间连贯度”的较差项。"""
+    if not profile:
+        return (False, -1.0, -1.0, -1.0, -1.0)
+    ref_min = float(profile.get("min") or 0.0)
+    chain = (
+        _cosine(profile["embedding"], previous)
+        if previous is not None else None
+    )
+    valid = ref_min >= cfg.CLONE_SPK_MIN_COS
+    if chain is not None:
+        valid = valid and chain >= cfg.CLONE_SPK_MIN_COS
+        worst = min(ref_min, chain)
+        average = (ref_min + chain) / 2.0
+    else:
+        worst = ref_min
+        average = ref_min
+    return (
+        bool(valid), worst, average, ref_min,
+        -1.0 if chain is None else chain,
+    )
+
+
+def _needs_speaker_candidate(
+    profile: dict | None, previous: np.ndarray | None,
+) -> bool:
+    """首条低于目标，或与上一段不够连贯时，才多生成一条候选。"""
+    if not profile:
+        return False
+    if float(profile.get("min") or 0.0) < cfg.CLONE_SPK_TARGET_COS:
+        return True
+    if previous is not None:
+        chain = _cosine(profile["embedding"], previous)
+        return chain < cfg.CLONE_SPK_CHAIN_COS
+    return False
+
+
+# ---------------------------------------------------------------------------
 # 四个生成入口
 # ---------------------------------------------------------------------------
 def _gen_clone(
@@ -439,18 +864,28 @@ def _gen_clone(
     size: str,
     xvec_only: bool,
     warm_prompt: Any = None,
+    temperature: float | None = None,
+    top_p: float | None = None,
+    seed: int | None = None,
 ) -> tuple[np.ndarray, int]:
     model = load_model("clone", size)
     if warm_prompt is not None:
         _prime_prompt_cache(model, ref_audio, ref_text, xvec_only, warm_prompt, size)
-    wavs, sr = model.generate_voice_clone(
-        text=text,
-        language=language,
-        ref_audio=str(ref_audio),
-        ref_text=ref_text or "",
-        instruct=(instruct or None),
-        xvec_only=bool(xvec_only),
-    )
+    kwargs: dict[str, Any] = {}
+    if temperature is not None:
+        kwargs["temperature"] = float(temperature)
+    if top_p is not None:
+        kwargs["top_p"] = float(top_p)
+    with _seeded_rng(seed):
+        wavs, sr = model.generate_voice_clone(
+            text=text,
+            language=language,
+            ref_audio=str(ref_audio),
+            ref_text=ref_text or "",
+            instruct=(instruct or None),
+            xvec_only=bool(xvec_only),
+            **kwargs,
+        )
     return np.asarray(wavs[0], dtype=np.float32), int(sr)
 
 
@@ -814,7 +1249,10 @@ def synthesize(p: dict, on_progress=None) -> tuple[np.ndarray, int, str, str, di
     prof = cfg.profile()
     size = cfg.resolve_size(p.get("size"))
     instruct = (p.get("instruct") or "").strip() or None
-    gap = _gap_value(p.get("gap_secs"))
+    gap = _gap_value(
+        p.get("gap_secs"),
+        cfg.CLONE_GAP_SECS if mode == "clone" else cfg.SCRIPT_GAP_SECS,
+    )
 
     # 同一时刻只允许一次生成：GPU 上并行会互相踩显存
     with _GPU_LOCK:
@@ -895,22 +1333,22 @@ def _resolve_clone_source(p: dict) -> tuple[str, str, bool, Any]:
     """
     voice_name = (p.get("voice") or "").strip()
     warm = None
+    voice_default = None
     if voice_name:
         v = voices_mod.load_voice(voice_name)
         if v is None:
             raise RuntimeError(f"音色库里没有 [{voice_name}]。")
         ref_audio, ref_text = v["audio_path"], v.get("ref_text", "")
-        if p.get("xvec_only") is None:
-            xvec_only = v.get("xvec_only", cfg.CLONE_XVEC_ONLY)
-        else:
-            xvec_only = bool(p["xvec_only"])
+        voice_default = v.get("xvec_only", cfg.CLONE_XVEC_ONLY)
         warm = v.get("prompt")
     else:
         ref_audio = (p.get("ref_audio") or "").strip()
         if not ref_audio:
             raise RuntimeError("请选择一个音色，或上传参考音频。")
         ref_text = (p.get("ref_text") or "").strip()
-        xvec_only = bool(p.get("xvec_only", cfg.CLONE_XVEC_ONLY))
+        voice_default = bool(p.get("xvec_only", cfg.CLONE_XVEC_ONLY))
+
+    xvec_only = _clone_xvec_only(p, voice_default)
 
     if not xvec_only and not ref_text:
         raise RuntimeError(
@@ -926,13 +1364,14 @@ def _synth_clone(
 ) -> tuple[np.ndarray, int, str]:
     """语音克隆：音色库优先，其次用上传的参考音频。
 
-    **不限字数**：按 ``prof.script_chunk_chars`` 切段后逐段生成再拼接，
+    **不限字数**：按克隆专用阈值均衡切段后逐段生成再拼接，
     所以这里唯一的上限是「内存装不下」—— 由 ``cfg.MAX_AUDIO_SECONDS`` 兜住。
     """
     # 状态行的第二行。结果卡的「本次参数」已经把音色名/临时上传列出来了，
     # 这里再报一遍只是噪音 —— 这个口子只留给「参数区看不到」的增量信息。
     extra = ""
     ref_audio, ref_text, xvec_only, warm = _resolve_clone_source(p)
+    sampling = _clone_sampling(p)
 
     text = (p.get("text") or "").strip()
 
@@ -947,13 +1386,125 @@ def _synth_clone(
             "请拆成几次生成 —— 合并音频比重新生成一遍便宜得多。"
         )
 
-    prof = cfg.profile()
-    pieces = split_text(text, prof.script_chunk_chars)
+    chunk_chars = _clone_chunk_chars(p)
+    pieces = split_text(text, chunk_chars)
+
+    # 参考音频只分析一次；每一段复用同一份基准。
+    ref_feat = None
+    ref_wav = ref_sr = None
+    if sampling["stable"] and (
+        cfg.CLONE_DRIFT_ENABLED or cfg.CLONE_SPK_SCORE_ENABLED
+    ):
+        try:
+            ref_wav, ref_sr = sf.read(str(ref_audio), dtype="float32",
+                                     always_2d=False)
+            if getattr(ref_wav, "ndim", 1) > 1:
+                ref_wav = ref_wav.mean(axis=1)
+            ref_sr = int(ref_sr)
+            if cfg.CLONE_DRIFT_ENABLED:
+                ref_feat = _audio_features(ref_wav, ref_sr)
+        except Exception:  # noqa: BLE001  读不到参考音频时只跳过检查
+            ref_wav = ref_sr = None
+            ref_feat = None
+
+    retried = 0
+    candidate_takes = 0
+    speaker_extra = 0
+    spk_model = None
+    ref_spk = None
+    previous_spk = None
+    speaker_scores: list[dict] = []
+    speaker_chain: list[float] = []
+
+    def score_speaker(wav: np.ndarray, sr: int) -> dict | None:
+        """延迟加载 speaker encoder；读不到参考音频时安全跳过。"""
+        nonlocal spk_model, ref_spk
+        if (not sampling["stable"] or not cfg.CLONE_SPK_SCORE_ENABLED
+                or ref_wav is None or ref_sr is None):
+            return None
+        try:
+            if spk_model is None:
+                spk_model = load_model("clone", size)
+                ref_spk = _speaker_embedding(spk_model, ref_wav, ref_sr)
+            return _speaker_profile(spk_model, wav, sr, ref_spk)
+        except Exception:  # noqa: BLE001  评分失败退回频谱检查
+            return None
+
+    def take(piece: str, i: int, seed: int | None) -> tuple[
+        np.ndarray, int, dict | None, dict | None
+    ]:
+        nonlocal candidate_takes
+        wav_i, sr_i = _gen_clone(
+            piece, language, ref_audio, ref_text, instruct, size, xvec_only,
+            warm if i == 0 and candidate_takes == 0 else None,
+            sampling["temperature"], sampling["top_p"], seed,
+        )
+        candidate_takes += 1
+        return (
+            wav_i, sr_i,
+            _audio_features(wav_i, sr_i) if ref_feat is not None else None,
+            score_speaker(wav_i, sr_i),
+        )
 
     def gen_one(piece: str, i: int) -> tuple[np.ndarray, int]:
+        nonlocal retried, previous_spk, speaker_extra
         # 音色基因只预热一次；之后的段直接命中内核缓存
-        return _gen_clone(piece, language, ref_audio, ref_text, instruct,
-                          size, xvec_only, warm if i == 0 else None)
+        # 所有段共用同一个主 seed。以前按段号派生 seed，等于每段都从另一条
+        # 随机轨迹起音；即使 speaker embedding 相同，韵律也会更容易分叉。
+        seg_seed = sampling["seed"]
+        wav, sr, feat, spk = take(piece, i, seg_seed)
+
+        # 第一层：真实 speaker encoder 择优。只有首条低于目标或与上一段
+        # 不够连贯时才多跑一条，正常段仍然只生成一次。
+        if (spk is not None and cfg.CLONE_SPK_CANDIDATES > 1
+                and _needs_speaker_candidate(spk, previous_spk)):
+            pool = [(wav, sr, feat, spk)]
+            for k in range(1, int(cfg.CLONE_SPK_CANDIDATES)):
+                speaker_extra += 1
+                extra_seed = (
+                    (seg_seed + 104729 * (k + 1)) % (2**31)
+                    if seg_seed is not None else None
+                )
+                pool.append(take(piece, i, extra_seed))
+            wav, sr, feat, spk = max(
+                pool, key=lambda x: _speaker_candidate_key(x[3], previous_spk)
+            )
+
+        # 第二层：频谱/基频兜底。speaker encoder 不可用，或择优后仍明显
+        # 漂移时，沿用原来的换 seed 重生成逻辑。
+        retries = 0
+        while (ref_feat is not None and feat is not None
+               and _drifted(ref_feat, feat)
+               and retries < cfg.CLONE_DRIFT_MAX_RETRIES):
+            retries += 1
+            retried += 1
+            retry_seed = (
+                (seg_seed + 104729 * (retries + 10)) % (2**31)
+                if seg_seed is not None else None
+            )
+            wav2, sr2, feat2, spk2 = take(piece, i, retry_seed)
+            if spk is not None and spk2 is not None:
+                better = (
+                    _speaker_candidate_key(spk2, previous_spk)
+                    > _speaker_candidate_key(spk, previous_spk)
+                )
+            else:
+                better = (
+                    feat2 is not None and (
+                        feat is None
+                        or _drift_score(ref_feat, feat2)
+                        < _drift_score(ref_feat, feat)
+                    )
+                )
+            if better:
+                wav, sr, feat, spk = wav2, sr2, feat2, spk2
+
+        if spk is not None:
+            speaker_scores.append(spk)
+            if previous_spk is not None:
+                speaker_chain.append(_cosine(spk["embedding"], previous_spk))
+            previous_spk = spk["embedding"]
+        return wav, sr
 
     metas = [
         {
@@ -967,11 +1518,41 @@ def _synth_clone(
         }
         for i, piece in enumerate(pieces)
     ]
-    wav, sr = _run_pieces(
-        pieces, gen_one, _gap_value(gap_secs), on_progress, metas
+    gap = _gap_value(gap_secs, cfg.CLONE_GAP_SECS)
+    wav, sr = _run_pieces(pieces, gen_one, gap, on_progress, metas)
+    _record_sampling(
+        p, sampling, retried,
+        {
+            "xvec_only": bool(xvec_only), "chunk_chars": chunk_chars,
+            "gap_secs": gap, "candidate_takes": candidate_takes,
+            "speaker_cosine": (
+                round(min(x["cosine"] for x in speaker_scores), 4)
+                if speaker_scores else None
+            ),
+            "speaker_cos_min": (
+                round(min(x["min"] for x in speaker_scores), 4)
+                if speaker_scores else None
+            ),
+            "speaker_chain_min": (
+                round(min(speaker_chain), 4) if speaker_chain else None
+            ),
+        },
     )
     if len(pieces) > 1:
         extra += f"（长文本自动切为 {len(pieces)} 段）"
+    if sampling["stable"]:
+        extra += (
+            f"\n音色稳定：温度 {sampling['temperature']:.2f}，"
+            f"top_p {sampling['top_p']:.2f}，seed {sampling['seed']}，"
+            f"{'仅说话人向量' if xvec_only else '完整 ICL'}"
+        )
+        if speaker_extra:
+            extra += f"；说话人相似度择优额外生成 {speaker_extra} 条候选"
+        if retried:
+            extra += f"；检测到 {retried} 段频谱偏移，已自动重生成"
+        if speaker_scores:
+            worst = min(x["min"] for x in speaker_scores)
+            extra += f"\n说话人相似度最低窗口 {worst:.3f}"
     return wav, sr, extra
 
 
@@ -1048,7 +1629,10 @@ def synthesize_stream(p: dict):
     instruct = (p.get("instruct") or "").strip() or None
     chunk_size = max(1, int(p.get("chunk_size") or STREAM_CHUNK_SIZE))
     prof = cfg.profile()
-    gap = _gap_value(p.get("gap_secs"))
+    gap = _gap_value(
+        p.get("gap_secs"),
+        cfg.CLONE_GAP_SECS if mode == "clone" else cfg.SCRIPT_GAP_SECS,
+    )
     gate = np.zeros(int(STREAM_SAMPLE_RATE * gap), dtype=np.float32)
 
     with _GPU_LOCK:
@@ -1056,23 +1640,41 @@ def synthesize_stream(p: dict):
         try:
             if mode == "clone":
                 ref_audio, ref_text, xvec_only, warm = _resolve_clone_source(p)
+                sampling = _clone_sampling(p)
+                chunk_chars = _clone_chunk_chars(p)
+                # 流式不做逐段漂移检测（音频已经边生成边播出去了，
+                # 再换 take 会让用户听到的内容和最终文件不一致）。
+                _record_sampling(
+                    p, sampling, 0,
+                    {"xvec_only": bool(xvec_only), "chunk_chars": chunk_chars,
+                     "gap_secs": gap},
+                )
                 model = load_model("clone", size)
                 if warm is not None:
                     _prime_prompt_cache(model, ref_audio, ref_text, xvec_only, warm, size)
-                pieces = split_text(text, prof.script_chunk_chars)
+                pieces = split_text(text, chunk_chars)
                 yield ("meta", {"sr": STREAM_SAMPLE_RATE, "chunk_size": chunk_size,
                                 "pieces": len(pieces), "mode": mode})
                 for i, piece in enumerate(pieces):
                     if i:
                         yield ("gap", gate)
-                    stream = model.generate_voice_clone_streaming(
-                        text=piece, language=language,
-                        ref_audio=str(ref_audio), ref_text=ref_text or "",
-                        xvec_only=xvec_only, instruct=instruct,
-                        chunk_size=chunk_size,
-                    )
-                    for chunk, _sr, _timing in stream:
-                        yield ("pcm", np.asarray(chunk, dtype=np.float32))
+                    # 与普通生成一致：所有段共用主 seed，只有漂移重试才换 seed。
+                    seg_seed = sampling["seed"]
+                    kwargs: dict[str, Any] = {}
+                    if sampling["temperature"] is not None:
+                        kwargs["temperature"] = sampling["temperature"]
+                    if sampling["top_p"] is not None:
+                        kwargs["top_p"] = sampling["top_p"]
+                    with _seeded_rng(seg_seed):
+                        stream = model.generate_voice_clone_streaming(
+                            text=piece, language=language,
+                            ref_audio=str(ref_audio), ref_text=ref_text or "",
+                            xvec_only=xvec_only, instruct=instruct,
+                            chunk_size=chunk_size,
+                            **kwargs,
+                        )
+                        for chunk, _sr, _timing in stream:
+                            yield ("pcm", np.asarray(chunk, dtype=np.float32))
                     # 基因只预热一次；后续段直接命内核缓存
                     warm = None
             else:  # official 单人（多人对话已在 stream_ready 挡掉）
@@ -1096,6 +1698,15 @@ def synthesize_stream(p: dict):
 
         yield ("done", {"took": round(time.time() - t0, 2),
                         "pieces": len(pieces), "status": "",
+                        "params": {
+                            k: p.get(k) for k in
+                            ("stable", "temperature", "top_p", "seed",
+                             "drift_retries", "candidate_takes",
+                             "speaker_cosine", "speaker_cos_min",
+                             "speaker_chain_min", "xvec_only", "chunk_chars",
+                             "gap_secs")
+                            if p.get(k) is not None
+                        },
                         # 流式**不做**后处理：音频块在生成的同时就已经播出去了，
                         # 收尾再剪静音/归一化只会让「下载到的」和「刚听到的」不一样。
                         # 想听后处理后的版本，用普通生成（参数不用改）。

@@ -157,11 +157,56 @@ DEFAULT_SIZE = "auto"
 # 内核自己的默认是 True，这里刻意反着来；界面可逐次、也可逐音色覆盖。
 CLONE_XVEC_ONLY = False
 
+# 语音克隆的采样参数。内核默认是 temperature=0.9 / top_p=1.0，
+# 随机性足够大：同一段文本重跑几次，偶尔会抽到音色明显偏离参考音频的
+# 「坏 take」。克隆页的「音色稳定」模式用下面这组更保守的参数：
+# 温度低一些、核采样范围收窄，代价是语调变化会少一点。
+CLONE_STABLE_DEFAULT = True
+CLONE_STABLE_TEMPERATURE = 0.35
+CLONE_STABLE_TOP_P = 0.85
+
+# 长文本只在必要时切段。切段会让每一段重新起音，段首的呼吸、重音和语速
+# 都要重新建立；即使 speaker embedding 相似度很高，听感也会像换了一口气。
+# 实测 528 字（约 95 秒音频）可以一次生成且不截断，相似度 0.9787；
+# 因此克隆默认允许一次送 600 字，超过才均衡切开。这个值不是无上限：
+# 再长仍受 max_new_tokens 和内存护栏约束。
+CLONE_CHUNK_CHARS = 600
+
+# 稳定克隆默认只使用 speaker embedding（xvec_only），而不是完整 ICL。
+# 完整 ICL 会额外带上参考音频的 codec 细节，参考较长时更容易把末字、语气和
+# 语速一起带进生成，段间差异也更明显。只锁 speaker embedding 时，实测同一
+# 119 字文本的相似度从 0.960 提到 0.985，且没有参考末字串音。
+# 稳定模式开启时强制使用 speaker embedding；关掉稳定模式后才使用
+# 逐音色设置或本次手动选择。前端会把复选框锁定，避免显示与实际不一致。
+CLONE_STABLE_XVEC_ONLY = True
+
+# 克隆默认每段只生成一次，不做频谱分析或候选重生成。
+# 这些检查会明显拖慢长音频；需要排查坏样本时再临时打开。
+CLONE_DRIFT_ENABLED = False
+CLONE_DRIFT_CENTROID_RATIO = 1.7   # 频谱质心相差超过 1.7 倍
+CLONE_DRIFT_FLATNESS_RATIO = 3.5   # 频谱平坦度相差超过 3.5 倍
+CLONE_DRIFT_F0_RATIO = 1.6         # 基频相差超过 1.6 倍
+CLONE_DRIFT_MAX_RETRIES = 1        # 每段最多重生成一次
+
+# speaker encoder 评分默认关闭。生成后不再做窗口切分、向量提取和 cosine，
+# 每段只跑一次 TTS。
+CLONE_SPK_SCORE_ENABLED = False
+CLONE_SPK_MIN_COS = 0.972
+CLONE_SPK_TARGET_COS = 0.981
+CLONE_SPK_CHAIN_COS = 0.984
+CLONE_SPK_WINDOW_SECS = 8.0
+CLONE_SPK_MIN_WINDOW_SECS = 3.0
+CLONE_SPK_CANDIDATES = 1           # 含首条；只生成一次
+
 # 长剧本分段合成时，段与段之间插入的静音（秒）。原项目用 0.4s。
 SCRIPT_GAP_SECS = 0.4
 
+# 克隆分段之间的默认静音。切段已经会重新起音，再插 0.4s 会让听感更像
+# 两次独立录音；0.12s 只够避免波形硬切，不额外制造换气断点。
+CLONE_GAP_SECS = 0.12
+
 # 「一口气整体送进模型」的模式（目前只有声音设计）的最长文本字符数。
-# clone / official / script 都在下面按句切段（core.split_text），不再受它限制 ——
+# clone / official / script 都在下面均衡切段（core.split_text），不再受它限制 ——
 # 长度由「预估 + 确认」管，不由硬上限管。
 MAX_TEXT_CHARS = 2000
 

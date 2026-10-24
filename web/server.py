@@ -185,11 +185,20 @@ def api_bootstrap():
             # 单次能装下的音频时长。前端不许自己写死这几个值 —— 换个档位就全错。
             "chars_per_sec": history_mod.chars_per_sec(),
             "chunk_chars": cfg.profile().script_chunk_chars,
+            "clone_chunk_chars": max(
+                cfg.CLONE_CHUNK_CHARS, cfg.profile().script_chunk_chars
+            ),
             "max_audio_secs": cfg.MAX_AUDIO_SECONDS,
         },
         "defaults": {
             "xvec_only": cfg.CLONE_XVEC_ONLY,
             "gap_secs": cfg.SCRIPT_GAP_SECS,
+            "clone_gap_secs": cfg.CLONE_GAP_SECS,
+            # 克隆页「音色稳定」：低温度 + 收窄 top_p，并固定 seed。
+            # 漂移检测是后端的独立兜底开关，不在界面上暴露。
+            "clone_stable": cfg.CLONE_STABLE_DEFAULT,
+            "clone_temperature": cfg.CLONE_STABLE_TEMPERATURE,
+            "clone_top_p": cfg.CLONE_STABLE_TOP_P,
             # 输出后处理的默认开关与阈值 —— 界面据此画那一组勾选，
             # 前端不再自己写一遍默认值（两边各写一份迟早会分叉）
             "postprocess": postproc.defaults(),
@@ -621,7 +630,10 @@ def _run_job(jid: str, kind: str, p: dict) -> None:
         # 这里先归一化成「实际生效的值」，synthesize 拿到的输入完全等价。
         p["language"] = p.get("language") or "Auto"
         p["size"] = cfg.resolve_size(p.get("size"))
-        p["gap_secs"] = core._gap_value(p.get("gap_secs"))
+        # 默认值按 mode 决定：克隆 0.12s，其它 0.4s。这里只归一化显式传入的
+        # 值；没传就保持缺省，由 core 决定，避免把克隆专用默认值覆盖成 0.4s。
+        if p.get("gap_secs") is not None:
+            p["gap_secs"] = core._gap_value(p.get("gap_secs"))
 
         _job_set(jid, state="running", progress=0.02,
                  message="正在准备模型 —— 首次使用该规格要加载权重并预热 CUDA graph，"
@@ -658,6 +670,15 @@ def _run_job(jid: str, kind: str, p: dict) -> None:
                 "took": took,            # 与合成记录同一个数
                 "headline": head,
                 "postprocess": pp_stats,
+                # _synth_clone 会把实际生效的 stable/temperature/top_p/seed/
+                # drift_retries 写回 p；结果卡与合成记录共用这一份。
+                "params": {
+                    k: p.get(k) for k in
+                    ("stable", "temperature", "top_p", "seed", "drift_retries",
+                     "candidate_takes", "speaker_cosine", "speaker_cos_min",
+                     "speaker_chain_min", "xvec_only", "chunk_chars", "gap_secs")
+                    if p.get(k) is not None
+                },
             },
         )
     except Exception as e:  # noqa: BLE001
@@ -803,6 +824,7 @@ async def api_tts_stream(payload: dict):
                         "status": status,
                         "headline": status.splitlines()[0] if status else "",
                         "pieces": pl.get("pieces"),
+                        "params": pl.get("params"),
                         "postprocess": skipped,
                     })
                     return

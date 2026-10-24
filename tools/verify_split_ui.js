@@ -48,7 +48,8 @@ const LONG_3000 = "文".repeat(3000);
     text: document.querySelector("#c-est").innerText.replace(/\s+/g, " "),
     count: document.querySelector("#c-count").textContent,
   }));
-  check("300 字给出段数", /\d+\s*段/.test(est.text), est.text.slice(0, 90));
+  check("300 字按克隆阈值显示为一段",
+    /一段念完/.test(est.text), est.text.slice(0, 90));
   check("300 字给出音频时长与生成耗时",
     /音频约/.test(est.text) && /生成约/.test(est.text), est.text.slice(0, 90));
   check("字数胶囊照旧", est.count.includes("300"), est.count);
@@ -82,6 +83,9 @@ const LONG_3000 = "文".repeat(3000);
   check("3000 字仍能给出预估（没被拒）", /\d+\s*段/.test(est3k), est3k.slice(0, 90));
   check("3000 字预估的段数 > 1（会自动切段）",
     (parseInt((est3k.match(/(\d+)\s*段/) || [])[1], 10) || 0) > 1, est3k.slice(0, 60));
+  check("3000 字按 600 字克隆阈值预估为 5 段（不是旧阈值的 50 段）",
+    (parseInt((est3k.match(/(\d+)\s*段/) || [])[1], 10) || 0) === 5,
+    est3k.slice(0, 60));
 
   let sent = null;
   let jobPolls = 0;
@@ -112,7 +116,10 @@ const LONG_3000 = "文".repeat(3000);
         ok: true, state: "done", progress: 1,
         message: "音频 3.0s，耗时 2.0s，RTF 0.67",
         result: { file: SAMPLE, url: "/media/out/" + encodeURIComponent(SAMPLE),
-                  duration: 2.0, level: "ok", took: 2.0 },
+                  duration: 2.0, level: "ok", took: 2.0,
+                  params: { stable: true, seed: 20261024, candidate_takes: 6,
+                            speaker_cos_min: 0.9787, speaker_chain_min: 0.9912,
+                            drift_retries: 0 } },
       }),
     });
   });
@@ -125,7 +132,41 @@ const LONG_3000 = "文".repeat(3000);
     check("3000 字原样提交（前端不再拦字数）",
       (sent.text || "").length === 3000, String((sent.text || "").length));
     check("payload 里没有 n（不再有多份候选）", sent.n === undefined, String(sent.n));
+    check("克隆默认提交音色稳定", sent.stable === true, String(sent.stable));
   }
+
+  // 稳定开关默认开启、可单次关掉，且关掉后 payload 真的是 false
+  const stableBox = await page.evaluate(() => {
+    const el = document.querySelector("#c-stable");
+    return { exists: !!el, checked: el?.checked };
+  });
+  check("克隆页有音色稳定开关且默认开启",
+    stableBox.exists && stableBox.checked === true, JSON.stringify(stableBox));
+  const linked = await page.evaluate(() => ({
+    xvec: document.querySelector("#c-xvec").checked,
+    disabled: document.querySelector("#c-xvec").disabled,
+  }));
+  check("稳定开启时自动勾选并锁定仅说话人向量",
+    linked.xvec === true && linked.disabled === true, JSON.stringify(linked));
+
+  // 等第一条假任务真正结束，按钮恢复后才能提交第二条；否则点到的是
+  // disabled 按钮，sent 还停在第一条的 payload，测试会误报。
+  await page.waitForFunction(() => !document.querySelector("#c-go").disabled,
+    null, { timeout: 8000 });
+
+  // 关掉稳定开关，再点一次生成：payload 必须明确带 stable=false，
+  // 不能因为后端缺省 true 就把用户的单次选择吞掉。
+  await page.uncheck("#c-stable");
+  await page.evaluate(() => document.querySelector("#c-go").click());
+  await page.waitForTimeout(400);
+  check("关掉稳定开关后 payload 带 stable=false",
+    sent && sent.stable === false, sent ? String(sent.stable) : "没有 payload");
+  const unlocked = await page.evaluate(() => ({
+    xvecDisabled: document.querySelector("#c-xvec").disabled,
+  }));
+  check("关掉稳定后解锁克隆方式复选框", unlocked.xvecDisabled === false,
+    JSON.stringify(unlocked));
+  await page.check("#c-stable");   // 后面的断言仍按默认态继续
 
   // --- 5. 真进度：后端给 pieces/piece 时进度条不再是时间缓动 ---
   const run = await page.evaluate(() => ({
@@ -150,6 +191,29 @@ const LONG_3000 = "文".repeat(3000);
   check("完成后徽章是「已完成」", done.badge === "已完成", done.badge);
   check("指标行出现文件名", done.metrics.includes(SAMPLE), done.metrics.slice(0, 80));
   check("播放器指向正式文件", done.href.includes("/media/out/"), done.href);
+  const doneParams = await page.evaluate(() =>
+    document.querySelector("#c-result [data-role=params]").innerText);
+  check("结果卡显示候选择优与说话人相似度",
+    /候选择优/.test(doneParams) && /最低 97\.9%/.test(doneParams)
+    && /段间音色连贯度/.test(doneParams), doneParams.slice(0, 160));
+
+  // 设置页的「默认值」必须和克隆页共用同一份偏好，不能各读各的。
+  await page.evaluate(() => {
+    document.querySelector('[data-view="settings"]').click();
+  });
+  await page.waitForSelector("#view-settings:not(.hidden)");
+  const settingBefore = await page.isChecked("#set-clone-stable");
+  await page.uncheck("#set-clone-stable");
+  // 这项设置按设计只影响「下次打开克隆页」，所以必须重新载入页面再验。
+  await page.reload({ waitUntil: "load" });
+  await page.waitForFunction(() =>
+    document.querySelector("#boot")?.classList.contains("hidden"), null, { timeout: 20000 });
+  check("设置页关闭默认值后，克隆页新会话跟随关闭",
+    settingBefore === true && await page.isChecked("#c-stable") === false,
+    `${settingBefore} / ${await page.isChecked("#c-stable")}`);
+  await page.evaluate(() => {
+    localStorage.removeItem("qs-clone-stable-default");
+  });
 
   check("没有控制台报错", errs.length === 0, errs.slice(0, 2).join(" | "));
 

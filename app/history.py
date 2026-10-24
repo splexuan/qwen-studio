@@ -79,6 +79,21 @@ def add(entry: dict) -> dict:
         "took": round(float(entry.get("took") or 0), 2),
         "xvec_only": entry.get("xvec_only"),
         "gap_secs": entry.get("gap_secs"),
+        # 克隆采样：稳定模式是否开启、实际温度/top_p、主 seed 与漂移重试次数。
+        # 固定 seed 只保证「同一组参数可复现」，不保证每个 take 一定像；
+        # 但事后要排查/重跑，必须知道当时用的到底是哪一组。
+        "stable": entry.get("stable"),
+        "temperature": entry.get("temperature"),
+        "top_p": entry.get("top_p"),
+        "seed": entry.get("seed"),
+        "drift_retries": entry.get("drift_retries"),
+        # 说话人相似度择优：实际生成了几条 take、最终最低窗口分数、
+        # 以及段与段之间的最低连贯度。失败/跳过的任务允许为 null。
+        "candidate_takes": entry.get("candidate_takes"),
+        "speaker_cosine": entry.get("speaker_cosine"),
+        "speaker_cos_min": entry.get("speaker_cos_min"),
+        "speaker_chain_min": entry.get("speaker_chain_min"),
+        "chunk_chars": entry.get("chunk_chars"),
         # 后处理统计（剪掉多少静音 / 实际增益 / 是不是流式跳过了）。
         # 没有它，「这条为什么比上次短 1.2 秒」事后根本查不出来 ——
         # 参数区显示的是「开没开」，这里记的是「实际动了多少」，不是一回事。

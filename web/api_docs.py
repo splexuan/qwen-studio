@@ -15,7 +15,7 @@ from __future__ import annotations
 ENDPOINTS: list[dict] = [
     {
         "method": "GET", "path": "/api/bootstrap", "group": "首屏",
-        "desc": "一次拿全首屏所需：硬件档位、语种、规格、官方说话人、音色列表、模型就位情况、ASR 可用性、各项上限与默认值（含输出后处理的默认开关与阈值 defaults.postprocess）。",
+        "desc": "一次拿全首屏所需：硬件档位、语种、规格、官方说话人、音色列表、模型就位情况、ASR 可用性、各项上限与默认值（含音色稳定 defaults.clone_stable / clone_temperature / clone_top_p，以及输出后处理的默认开关与阈值 defaults.postprocess）。",
         "params": [],
     },
     {
@@ -143,7 +143,7 @@ ENDPOINTS: list[dict] = [
     {
         "method": "POST", "path": "/api/jobs", "group": "合成",
         "desc": "提交合成任务，立即返回 job id。生成是重活，一律走后台线程，前端轮询进度。"
-                "clone / official / script 会按句自动切段（split_text），文本长度**没有硬上限**"
+                "clone / official / script 会自动均衡切段（split_text），文本长度**没有硬上限**"
                 "（只有声音设计仍限 max_text_chars —— 它每段都会换成另一把嗓子，不能切）。"
                 "clone / official / script 都接受 gap_secs；剧本里的注释、动作、场景标题"
                 "和 `#` 禁用行会被跳过。",
@@ -158,6 +158,8 @@ ENDPOINTS: list[dict] = [
             ("ref_audio", "str?", "mode=clone 时的参考音频绝对路径（脚本调用用这个）"),
             ("ref_text", "str?", "参考音频文本；xvec_only=false 时必填"),
             ("xvec_only", "bool?", "仅用说话人向量；false 走完整 ICL，更贴参考韵律"),
+            ("stable", "bool?", "克隆页「音色稳定」；缺省 true。开启后强制 xvec_only=true，使用低温度 + 收窄 top_p + 统一主 seed；非流式逐段用内核 speaker encoder 计算参考相似度与段间连贯度，低于目标时多生成一条候选并择优；频谱/基频检查继续作为兜底"),
+            ("chunk_chars", "int?", "克隆切段阈值；缺省 600。119 字这类中等文本整段生成，更长才均衡切分"),
             ("speaker", "str?", "mode=official 时的官方说话人 key"),
             ("gap_secs", "float?", "段间静音秒数，0–10，默认取 defaults.gap_secs；"
                                      "剧本/多人对话/长文本切段间生效"),
@@ -193,7 +195,11 @@ ENDPOINTS: list[dict] = [
         "desc": "轮询任务：state ∈ queued/running/done/error；done 时 result 带音频 URL 与时长。"
                 "长文本生成期间还会带 pieces / piece 两个字段（共几段、走到了第几段），"
                 "剧本任务还会带 role / line / line_id / scene / current（当前角色、源行号、"
-                "行 id、场景、当前文本片段），前端据此画逐句进度。",
+                "行 id、场景、当前文本片段），前端据此画逐句进度。"
+                "克隆任务完成时 result.params 还会带实际生效的 stable / temperature / "
+                "top_p / seed / drift_retries / candidate_takes / speaker_cosine / "
+                "speaker_cos_min / speaker_chain_min / xvec_only / chunk_chars / gap_secs，"
+                "用于回看与复现。",
         "params": [("jid", "str", "任务 id")],
     },
     {
@@ -216,6 +222,8 @@ ENDPOINTS: list[dict] = [
             ("instruct", "str?", "情感或风格指令"),
             ("voice", "str?", "mode=clone 时的音色库名字"),
             ("ref_upload", "str?", "mode=clone 时用刚上传的临时音频"),
+            ("xvec_only", "bool?", "仅用说话人向量；false 走完整 ICL"),
+            ("stable", "bool?", "克隆时是否启用音色稳定；缺省 true。流式不做逐段漂移重试"),
             ("speaker", "str?", "mode=official 时的官方说话人 key"),
             ("chunk_size", "int?", "每块多少 codec 步，默认 8（约 0.67 秒音频）"),
             ("gap_secs", "float?", "段间静音秒数，默认取 defaults.gap_secs"),
